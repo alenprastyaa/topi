@@ -13,7 +13,7 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 15 * 1024 * 1024 },
 });
-const PORT = process.env.PORT || 3200;
+const PORT = process.env.PORT || 3299;
 const JWT_SECRET =  'topi';
 const DB_HOST = process.env.MYSQL_HOST || '127.0.0.1';
 const DB_PORT = Number(process.env.MYSQL_PORT || 3306);
