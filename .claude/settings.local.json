@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n '`[^`]*-\\\\\\(slate\\\\|cyan\\\\|emerald\\\\|rose\\\\|amber\\\\|violet\\\\|red\\\\|orange\\\\\\)-' public/index.html)",
+      "Bash(npx --version)",
+      "Read(//private/tmp/**)",
+      "Bash(timeout 90 npx --yes playwright@1.48 --version)",
+      "Bash(npx --yes playwright@1.48 --version)"
+    ]
+  }
+}
