@@ -6,7 +6,15 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
-    "pdfkit": "^0.19.1"
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.11.5",
+    "pdfkit": "^0.19.1",
+    "sequelize": "^6.37.5",
+    "xlsx": "^0.18.5"
   },
   "keywords": [],
   "author": "",

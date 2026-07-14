@@ -14,6 +14,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
   <style>
@@ -343,26 +344,65 @@
                 </div>
               </div>
 
-              <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <div class="rounded-lg border border-slate-800 bg-slate-900 p-4">
+                <div class="grid gap-3 md:grid-cols-3 xl:grid-cols-[1fr_1fr_1fr_auto] xl:items-end">
+                  <div>
+                    <label class="mb-1 block text-xs text-slate-400">Platform</label>
+                    <select v-model="dashboardFilters.platform" @change="applyDashboardFilters" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400">
+                      <option value="">Semua Platform</option>
+                      <option v-for="option in channelOptions" :key="'dash-platform-'+option.value" :value="option.value">{{ option.label }}</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs text-slate-400">Toko</label>
+                    <select v-model="dashboardFilters.storeName" @change="applyDashboardFilters" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400">
+                      <option value="">Semua Toko</option>
+                      <option v-for="store in stores" :key="'dash-store-'+store.id" :value="store.name">{{ store.platformStore || store.name }}</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs text-slate-400">Produk</label>
+                    <select v-model="dashboardFilters.sku" @change="applyDashboardFilters" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400">
+                      <option value="">Semua Produk</option>
+                      <option v-for="product in dashboardProductOptions" :key="'dash-product-'+product.id" :value="product.sku">{{ product.name }} ({{ product.sku }})</option>
+                    </select>
+                  </div>
+                  <button @click="applyDashboardFilters" class="flex items-center justify-center gap-2 rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-300">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+                      <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" />
+                    </svg>
+                    Refresh Data
+                  </button>
+                </div>
+              </div>
+
+              <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
                 <div class="rounded-lg border border-slate-800 bg-slate-900 p-4 shadow-lg shadow-black/10">
                   <div class="flex items-start justify-between gap-3">
                     <div>
-                      <p class="text-sm font-semibold text-slate-100">Pendapatan Periode</p>
+                      <p class="text-sm font-semibold text-slate-100">Pendapatan</p>
                       <p class="mt-4 text-2xl font-semibold text-slate-50">{{ formatMoney(dashboard?.totals?.revenue || 0) }}</p>
                     </div>
                     <span class="rounded-md bg-cyan-500/15 px-2.5 py-1 text-xs font-semibold text-cyan-300">Kas</span>
                   </div>
-                  <p class="mt-3 text-xs text-emerald-300">Laba kotor {{ formatMoney(dashboard?.totals?.grossProfit || 0) }}</p>
                 </div>
                 <div class="rounded-lg border border-slate-800 bg-slate-900 p-4 shadow-lg shadow-black/10">
                   <div class="flex items-start justify-between gap-3">
                     <div>
-                      <p class="text-sm font-semibold text-slate-100">Beban Periode</p>
+                      <p class="text-sm font-semibold text-slate-100">Pengeluaran</p>
                       <p class="mt-4 text-2xl font-semibold text-slate-50">{{ formatMoney(dashboard?.totals?.totalBebanPeriode || 0) }}</p>
                     </div>
                     <span class="rounded-md bg-rose-500/15 px-2.5 py-1 text-xs font-semibold text-rose-300">Biaya</span>
                   </div>
-                  <p class="mt-3 text-xs text-rose-300">Operasional + Marketing + Admin + Gaji</p>
+                </div>
+                <div class="rounded-lg border border-slate-800 bg-slate-900 p-4 shadow-lg shadow-black/10">
+                  <div class="flex items-start justify-between gap-3">
+                    <div>
+                      <p class="text-sm font-semibold text-slate-100">HPP</p>
+                      <p class="mt-4 text-2xl font-semibold text-slate-50">{{ formatMoney(dashboard?.totals?.hpp || 0) }}</p>
+                    </div>
+                    <span class="rounded-md bg-sky-500/15 px-2.5 py-1 text-xs font-semibold text-sky-300">HPP</span>
+                  </div>
                 </div>
                 <div class="rounded-lg border border-slate-800 bg-slate-900 p-4 shadow-lg shadow-black/10">
                   <div class="flex items-start justify-between gap-3">
@@ -372,145 +412,76 @@
                     </div>
                     <span class="rounded-md bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">Profit</span>
                   </div>
-                  <p class="mt-3 text-xs text-slate-400">Setelah HPP dan beban</p>
                 </div>
                 <div class="rounded-lg border border-slate-800 bg-slate-900 p-4 shadow-lg shadow-black/10">
                   <div class="flex items-start justify-between gap-3">
                     <div>
-                      <p class="text-sm font-semibold text-slate-100">Transaksi Periode</p>
-                      <p class="mt-4 text-2xl font-semibold text-slate-50">{{ dashboard?.counts?.sales || 0 }}</p>
+                      <p class="text-sm font-semibold text-slate-100">Total Transaksi Penjualan</p>
+                      <p class="mt-4 text-2xl font-semibold text-slate-50">{{ dashboard?.counts?.totalOrders || 0 }} Pesanan</p>
                     </div>
                     <span class="rounded-md bg-violet-500/15 px-2.5 py-1 text-xs font-semibold text-violet-300">Order</span>
                   </div>
-                  <p class="mt-3 text-xs text-slate-400">{{ dashboardPeriodLabel }}</p>
                 </div>
               </div>
 
-              <div class="grid gap-4 lg:grid-cols-3">
-                <div class="rounded-lg border border-slate-800 bg-slate-900 p-5 shadow-lg shadow-black/10 lg:col-span-2">
-                  <div class="mb-5 flex items-center justify-between gap-3">
-                    <div>
-                      <h4 class="text-lg font-semibold text-slate-50">Aktivitas Keuangan</h4>
-                      <p class="mt-1 text-xs text-slate-400">Pendapatan dibandingkan HPP dan beban</p>
-                    </div>
-                    <span class="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300">{{ dashboardPeriodLabel }}</span>
-                  </div>
-                  <div class="grid h-56 grid-cols-4 items-end gap-4 border-b border-slate-800 pb-3">
-                    <div v-for="bar in dashboardBars" :key="bar.label" class="flex h-full flex-col justify-end gap-2">
-                      <div class="flex flex-1 items-end gap-1.5">
-                        <div class="w-full rounded-t-md bg-cyan-400/80" :style="{ height: bar.primary + '%' }"></div>
-                        <div class="w-full rounded-t-md bg-orange-400/80" :style="{ height: bar.secondary + '%' }"></div>
-                      </div>
-                      <div>
-                        <p class="text-center text-xs text-slate-400">{{ bar.label }}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-400">
-                    <span class="inline-flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-sm bg-cyan-400"></span>Pendapatan</span>
-                    <span class="inline-flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-sm bg-orange-400"></span>HPP + Beban</span>
-                  </div>
-                </div>
-
-                <div class="rounded-lg border border-slate-800 bg-slate-900 p-5 shadow-lg shadow-black/10">
-                  <div class="mb-5 flex items-center justify-between">
-                    <div>
-                      <h4 class="text-lg font-semibold text-slate-50">Aset Data</h4>
-                      <p class="mt-1 text-xs text-slate-400">Master dan operasional</p>
-                    </div>
-                    <span class="text-xs text-slate-500">{{ (dashboard?.counts?.stores || 0) + (dashboard?.counts?.products || 0) + (dashboard?.counts?.employees || 0) }} item</span>
-                  </div>
-                  <div class="relative mx-auto h-44 w-44 rounded-full" :style="assetRingStyle">
-                    <div class="absolute inset-5 rounded-full bg-slate-900"></div>
-                    <div class="absolute inset-0 flex flex-col items-center justify-center">
-                      <p class="text-3xl font-semibold text-slate-50">{{ dashboard?.counts?.products || 0 }}</p>
-                      <p class="text-xs text-slate-400">Barang</p>
-                    </div>
-                  </div>
-                  <div class="mt-5 grid gap-2 text-sm">
-                    <div class="flex items-center justify-between rounded-md bg-slate-950/70 px-3 py-2">
-                      <span class="text-slate-400">Toko</span>
-                      <span class="font-semibold text-slate-100">{{ dashboard?.counts?.stores || 0 }}</span>
-                    </div>
-                    <div class="flex items-center justify-between rounded-md bg-slate-950/70 px-3 py-2">
-                      <span class="text-slate-400">Karyawan aktif</span>
-                      <span class="font-semibold text-slate-100">{{ dashboard?.counts?.employees || 0 }}</span>
-                    </div>
-                    <div class="flex items-center justify-between rounded-md bg-slate-950/70 px-3 py-2">
-                      <span class="text-slate-400">Absensi hari ini</span>
-                      <span class="font-semibold text-slate-100">{{ dashboard?.counts?.attendanceToday || 0 }}</span>
-                    </div>
-                  </div>
+              <div class="rounded-lg border border-slate-800 bg-slate-900 p-5 shadow-lg shadow-black/10">
+                <h4 class="mb-4 text-sm font-semibold uppercase tracking-[0.15em] text-slate-300">Tren Pendapatan</h4>
+                <div class="relative h-72">
+                  <canvas ref="revenueTrendCanvas"></canvas>
                 </div>
               </div>
 
-              <div class="grid gap-4 xl:grid-cols-[1.4fr_0.8fr]">
-                <div class="rounded-lg border border-slate-800 bg-slate-900 shadow-lg shadow-black/10">
-                  <div class="mb-4 flex items-center justify-between">
-                    <div class="p-5 pb-0">
-                      <h4 class="text-lg font-semibold text-slate-50">Transaksi Terbaru Periode</h4>
-                      <p class="mt-1 text-xs text-slate-400">{{ dashboardPeriodLabel }}</p>
-                    </div>
-                  </div>
-                  <div class="overflow-x-auto">
-                    <table class="min-w-full text-left text-sm">
-                      <thead class="border-y border-slate-800 bg-slate-950/60 text-slate-400">
-                        <tr>
-                          <th class="px-5 py-3">Tanggal</th>
-                          <th class="px-5 py-3">Toko</th>
-                          <th class="px-5 py-3">SKU</th>
-                          <th class="px-5 py-3 text-right">Sub Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="item in dashboard?.recent?.sales || []" :key="'sale-'+item.id" class="border-b border-slate-800 last:border-0">
-                          <td class="px-5 py-4 text-slate-300">{{ formatDate(item.saleDate) }}</td>
-                          <td class="px-5 py-4 text-slate-300">{{ item.storeName }}</td>
-                          <td class="px-5 py-4 text-slate-100">{{ item.sku }}</td>
-                          <td class="px-5 py-4 text-right text-slate-100">{{ formatMoney(item.subtotal) }}</td>
-                        </tr>
-                        <tr v-if="!(dashboard?.recent?.sales || []).length">
-                          <td colspan="4" class="px-5 py-8 text-center text-slate-500">Belum ada transaksi.</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
+              <div class="rounded-lg border border-slate-800 bg-slate-900 p-5 shadow-lg shadow-black/10">
+                <h4 class="mb-4 text-sm font-semibold uppercase tracking-[0.15em] text-slate-300">Kontribusi Platform</h4>
+                <div class="overflow-x-auto">
+                  <table class="min-w-full text-left text-sm">
+                    <thead class="border-b border-slate-800 text-slate-400">
+                      <tr>
+                        <th class="px-4 py-3">Platform & Toko</th>
+                        <th class="px-4 py-3 text-right">Total Pesanan</th>
+                        <th class="px-4 py-3 text-right">Total Produk</th>
+                        <th class="px-4 py-3 text-right">Total Penjualan</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="row in dashboard?.platformContribution || []" :key="'platform-contrib-'+row.label" class="border-b border-slate-800 last:border-0">
+                        <td class="px-4 py-3 text-slate-100">{{ row.label }}</td>
+                        <td class="px-4 py-3 text-right text-slate-300">{{ row.totalOrders }}</td>
+                        <td class="px-4 py-3 text-right text-slate-300">{{ row.totalQty }}</td>
+                        <td class="px-4 py-3 text-right text-slate-100">{{ formatMoney(row.totalSales) }}</td>
+                      </tr>
+                      <tr v-if="!(dashboard?.platformContribution || []).length">
+                        <td colspan="4" class="px-4 py-8 text-center text-slate-500">Belum ada data penjualan.</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
+              </div>
 
-                <div class="rounded-lg border border-slate-800 bg-slate-900 p-5 shadow-lg shadow-black/10">
-                  <div class="mb-4 flex items-center justify-between">
-                    <h4 class="text-lg font-semibold text-slate-50">Ringkasan Laporan</h4>
-                    <span class="text-xs text-slate-400">Laba dan total beban periode</span>
-                  </div>
-                  <div class="space-y-3 text-sm">
-                    <div class="flex items-center justify-between rounded-md border border-slate-800 bg-slate-950/70 px-4 py-3">
-                      <span class="text-slate-400">Laba Kotor</span>
-                      <span class="font-semibold text-slate-100">{{ formatMoney(dashboard?.totals?.grossProfit || 0) }}</span>
-                    </div>
-                    <div class="flex items-center justify-between rounded-md border border-slate-800 bg-slate-950/70 px-4 py-3">
-                      <span class="text-slate-400">Beban Operasional</span>
-                      <span class="font-semibold text-slate-100">{{ formatMoney(dashboard?.totals?.operational || 0) }}</span>
-                    </div>
-                    <div class="flex items-center justify-between rounded-md border border-slate-800 bg-slate-950/70 px-4 py-3">
-                      <span class="text-slate-400">Beban Marketing</span>
-                      <span class="font-semibold text-slate-100">{{ formatMoney(dashboard?.totals?.marketing || 0) }}</span>
-                    </div>
-                    <div class="flex items-center justify-between rounded-md border border-slate-800 bg-slate-950/70 px-4 py-3">
-                      <span class="text-slate-400">Biaya Admin</span>
-                      <span class="font-semibold text-slate-100">{{ formatMoney(dashboard?.totals?.adminFee || 0) }}</span>
-                    </div>
-                    <div class="flex items-center justify-between rounded-md border border-slate-800 bg-slate-950/70 px-4 py-3">
-                      <span class="text-slate-400">Gaji Karyawan</span>
-                      <span class="font-semibold text-slate-100">{{ formatMoney(dashboard?.totals?.gajiKaryawan || 0) }}</span>
-                    </div>
-                    <div class="flex items-center justify-between rounded-md border border-cyan-500/30 bg-cyan-500/10 px-4 py-3">
-                      <div>
-                        <span class="block text-cyan-200">Total Beban Periode</span>
-                        <span class="block text-[11px] text-cyan-300/70">Operasional + Marketing + Admin + Gaji</span>
-                      </div>
-                      <span class="font-semibold text-cyan-100">{{ formatMoney(dashboard?.totals?.totalBebanPeriode || 0) }}</span>
-                    </div>
-                  </div>
+              <div class="rounded-lg border border-slate-800 bg-slate-900 p-5 shadow-lg shadow-black/10">
+                <h4 class="mb-4 text-sm font-semibold uppercase tracking-[0.15em] text-slate-300">Kinerja Top Produk</h4>
+                <div class="overflow-x-auto">
+                  <table class="min-w-full text-left text-sm">
+                    <thead class="border-b border-slate-800 text-slate-400">
+                      <tr>
+                        <th class="px-4 py-3">Rank</th>
+                        <th class="px-4 py-3">Nama Produk</th>
+                        <th class="px-4 py-3 text-right">QTY</th>
+                        <th class="px-4 py-3 text-right">Total Penjualan</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="row in dashboard?.topProducts || []" :key="'top-product-'+row.sku" class="border-b border-slate-800 last:border-0">
+                        <td class="px-4 py-3 text-slate-100">{{ row.rank }}</td>
+                        <td class="px-4 py-3 text-slate-100">{{ row.name }}</td>
+                        <td class="px-4 py-3 text-right text-slate-300">{{ row.qty }}</td>
+                        <td class="px-4 py-3 text-right text-slate-100">{{ formatMoney(row.totalSales) }}</td>
+                      </tr>
+                      <tr v-if="!(dashboard?.topProducts || []).length">
+                        <td colspan="4" class="px-4 py-8 text-center text-slate-500">Belum ada data penjualan.</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </template>
@@ -584,14 +555,32 @@
                   <h3 class="mt-2 text-2xl font-semibold text-slate-50">Data karyawan</h3>
                   <p class="mt-2 text-sm text-slate-400">Kelola akun karyawan, jabatan, shift, dan komponen gaji.</p>
                 </div>
-                <button v-if="isOwner" @click="openModal('user')" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">
-                  Tambah Karyawan
-                </button>
+                <div v-if="isOwner" class="flex items-center gap-2">
+                  <button v-if="bulkSelection.karyawan.length" :disabled="bulkBusy" @click="bulkDeleteSelected('karyawan', 'users', users)" class="rounded-md border border-red-500 px-4 py-2 text-sm font-semibold text-red-300 transition hover:border-red-400 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-60">
+                    Hapus Terpilih ({{ bulkSelection.karyawan.length }})
+                  </button>
+                  <button @click="openModal('user')" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">
+                    Tambah Karyawan
+                  </button>
+                </div>
+              </div>
+              <div v-if="isOwner" class="rounded-lg border border-slate-800 bg-slate-900 p-4">
+                <div class="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-end">
+                  <div>
+                    <label class="mb-1 block text-xs text-slate-400">Cari Karyawan</label>
+                    <input v-model="userFilters.search" @keyup.enter="applyUserFilters" type="search" placeholder="Cari Nama, username atau Jabatan" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400" />
+                  </div>
+                  <button @click="applyUserFilters" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">Cari</button>
+                  <button @click="resetUserFilters" class="rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-500">Reset</button>
+                </div>
               </div>
               <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900">
                 <table class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
+                      <th v-if="isOwner" class="px-4 py-3">
+                        <input type="checkbox" :checked="isAllRowsSelected('karyawan', users)" @change="toggleSelectAllRows('karyawan', users)" class="rounded border-slate-600 bg-slate-950" />
+                      </th>
                       <th class="px-4 py-3">Nama</th>
                       <th class="px-4 py-3">Username</th>
                       <th class="px-4 py-3">Jabatan</th>
@@ -604,6 +593,9 @@
                   </thead>
                   <tbody>
                     <tr v-for="row in users" :key="row.id" class="border-b border-slate-800 last:border-0">
+                      <td v-if="isOwner" class="px-4 py-3">
+                        <input type="checkbox" :checked="isRowSelected('karyawan', row)" @change="toggleRowSelection('karyawan', row)" class="rounded border-slate-600 bg-slate-950" />
+                      </td>
                       <td class="px-4 py-3 text-slate-100">{{ row.fullName }}</td>
                       <td class="px-4 py-3 text-slate-300">{{ row.username }}</td>
                       <td class="px-4 py-3 text-slate-300">{{ row.jobTitle || '-' }}</td>
@@ -625,7 +617,7 @@
                       </td>
                     </tr>
                     <tr v-if="!users.length">
-                      <td :colspan="isOwner ? 8 : 7" class="px-4 py-8 text-center text-slate-500">Belum ada data karyawan.</td>
+                      <td :colspan="isOwner ? 9 : 7" class="px-4 py-8 text-center text-slate-500">Belum ada data karyawan.</td>
                     </tr>
                   </tbody>
                 </table>
@@ -710,14 +702,17 @@
                   </p>
                 </div>
                 <div class="flex items-center gap-3">
-                  <span class="text-sm text-slate-400">{{ isBackOffice ? 'Semua karyawan' : 'Riwayat Anda' }}</span>
+                  <span class="text-sm text-slate-400">{{ isSelfService ? 'Riwayat Anda' : 'Semua karyawan' }}</span>
+                  <button v-if="(isOwner || isLeader) && bulkSelection.absensi.length" :disabled="bulkBusy" @click="bulkDeleteSelected('absensi', 'attendance', attendanceRows)" class="rounded-md border border-red-500 px-4 py-2 text-sm font-semibold text-red-300 transition hover:border-red-400 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-60">
+                    Hapus Terpilih ({{ bulkSelection.absensi.length }})
+                  </button>
                   <button v-if="isOwner || isLeader" @click="addManualAttendance" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">
                     Tambah Absensi
                   </button>
                 </div>
               </div>
 
-              <div v-if="!isBackOffice" class="rounded-lg border border-slate-800 bg-slate-900 p-4 sm:p-5">
+              <div v-if="isSelfService" class="rounded-lg border border-slate-800 bg-slate-900 p-4 sm:p-5">
                 <template v-if="!faceProfile?.registered">
                   <p class="text-sm text-slate-300">Wajah Anda belum terdaftar. Daftarkan wajah terlebih dahulu sebelum bisa absen.</p>
                   <button @click="activeTab = 'wajah'" class="mt-3 rounded-md bg-cyan-500 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">
@@ -737,6 +732,13 @@
                         <span v-else-if="!todayAttendance.checkOutAt">Sudah absen masuk{{ todayAttendance.isLate ? ' (Telat)' : '' }}, belum absen pulang</span>
                         <span v-else>Absensi hari ini lengkap</span>
                       </p>
+                      <div v-if="!todayAttendance" class="mt-2">
+                        <label class="mb-1 block text-xs text-slate-500">Shift hari ini</label>
+                        <select v-model="absenSelectedShiftId" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400 sm:w-64">
+                          <option :value="null">Standar (ikut jam kerja umum)</option>
+                          <option v-for="shift in shifts" :key="'absen-shift-'+shift.id" :value="shift.id">{{ shift.name }}</option>
+                        </select>
+                      </div>
                     </div>
                     <button
                       @click="startAbsenCapture"
@@ -775,6 +777,25 @@
                     </button>
                   </div>
                 </template>
+              </div>
+
+              <div v-if="isOwner || isLeader" class="rounded-lg border border-slate-800 bg-slate-900 p-4">
+                <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.2fr_160px_160px_auto_auto] xl:items-end">
+                  <div>
+                    <label class="mb-1 block text-xs text-slate-400">Cari Karyawan</label>
+                    <input v-model="attendanceFilters.search" @keyup.enter="applyAttendanceFilters" type="search" placeholder="Cari Nama Karyawan" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs text-slate-400">Dari</label>
+                    <input v-model="attendanceFilters.from" @change="applyAttendanceFilters" type="date" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs text-slate-400">Sampai</label>
+                    <input v-model="attendanceFilters.to" @change="applyAttendanceFilters" type="date" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400" />
+                  </div>
+                  <button @click="applyAttendanceFilters" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">Cari</button>
+                  <button @click="resetAttendanceFilters" class="rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-500">Reset</button>
+                </div>
               </div>
 
               <div class="space-y-3 md:hidden">
@@ -824,6 +845,9 @@
                 <table class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
+                      <th v-if="isOwner || isLeader" class="px-4 py-3">
+                        <input type="checkbox" :checked="isAllRowsSelected('absensi', attendanceRows)" @change="toggleSelectAllRows('absensi', attendanceRows)" class="rounded border-slate-600 bg-slate-950" />
+                      </th>
                       <th class="px-4 py-3">Nama</th>
                       <th class="px-4 py-3">Tanggal</th>
                       <th class="px-4 py-3">Masuk</th>
@@ -839,6 +863,9 @@
                   </thead>
                   <tbody>
                     <tr v-for="row in attendanceRows" :key="'attendance-'+row.id" class="border-b border-slate-800 last:border-0">
+                      <td v-if="isOwner || isLeader" class="px-4 py-3">
+                        <input type="checkbox" :checked="isRowSelected('absensi', row)" @change="toggleRowSelection('absensi', row)" class="rounded border-slate-600 bg-slate-950" />
+                      </td>
                       <td class="px-4 py-3 text-slate-100">{{ row.user?.fullName || user.fullName }}</td>
                       <td class="px-4 py-3 text-slate-300">{{ formatDate(row.workDate) }}</td>
                       <td class="px-4 py-3 text-slate-300">{{ row.checkInAt ? formatDateTime(row.checkInAt) : '-' }}</td>
@@ -875,7 +902,7 @@
                       </td>
                     </tr>
                     <tr v-if="!attendanceRows.length">
-                      <td :colspan="isOwner || isLeader ? 11 : 9" class="px-4 py-8 text-center text-slate-500">Belum ada data absensi.</td>
+                      <td :colspan="isOwner || isLeader ? 12 : 9" class="px-4 py-8 text-center text-slate-500">Belum ada data absensi.</td>
                     </tr>
                   </tbody>
                 </table>
@@ -889,12 +916,30 @@
                   <h3 class="mt-2 text-2xl font-semibold text-slate-50">Master toko</h3>
                   <p class="mt-2 text-sm text-slate-400">Struktur mengikuti sheet Data Toko pada workbook acuan.</p>
                 </div>
-                <button @click="openModal('store')" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">Tambah Toko</button>
+                <div class="flex items-center gap-2">
+                  <button v-if="bulkSelection.toko.length" :disabled="bulkBusy" @click="bulkDeleteSelected('toko', 'stores', stores)" class="rounded-md border border-red-500 px-4 py-2 text-sm font-semibold text-red-300 transition hover:border-red-400 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-60">
+                    Hapus Terpilih ({{ bulkSelection.toko.length }})
+                  </button>
+                  <button @click="openModal('store')" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">Tambah Toko</button>
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-800 bg-slate-900 p-4">
+                <div class="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-end">
+                  <div>
+                    <label class="mb-1 block text-xs text-slate-400">Cari Toko</label>
+                    <input v-model="storeFilters.search" @keyup.enter="applyStoreFilters" type="search" placeholder="Cari Platform, Nama Toko" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400" />
+                  </div>
+                  <button @click="applyStoreFilters" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">Cari</button>
+                  <button @click="resetStoreFilters" class="rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-500">Reset</button>
+                </div>
               </div>
               <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900">
                 <table class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
+                      <th class="px-4 py-3">
+                        <input type="checkbox" :checked="isAllRowsSelected('toko', stores)" @change="toggleSelectAllRows('toko', stores)" class="rounded border-slate-600 bg-slate-950" />
+                      </th>
                       <th class="px-4 py-3">Nama Platform/Toko</th>
                       <th class="px-4 py-3">Nama Akun/Toko</th>
                       <th class="px-4 py-3">Nama Lengkap Toko</th>
@@ -904,6 +949,9 @@
                   </thead>
                   <tbody>
                     <tr v-for="row in stores" :key="row.id" class="border-b border-slate-800 last:border-0">
+                      <td class="px-4 py-3">
+                        <input type="checkbox" :checked="isRowSelected('toko', row)" @change="toggleRowSelection('toko', row)" class="rounded border-slate-600 bg-slate-950" />
+                      </td>
                       <td class="px-4 py-3 text-slate-100">{{ row.platform }}</td>
                       <td class="px-4 py-3 text-slate-300">{{ row.name }}</td>
                       <td class="px-4 py-3 text-slate-300">{{ row.platformStore }}</td>
@@ -914,7 +962,7 @@
                       </td>
                     </tr>
                     <tr v-if="!stores.length">
-                      <td colspan="5" class="px-4 py-8 text-center text-slate-500">Belum ada data toko.</td>
+                      <td colspan="6" class="px-4 py-8 text-center text-slate-500">Belum ada data toko.</td>
                     </tr>
                   </tbody>
                 </table>
@@ -930,6 +978,9 @@
                 </div>
                 <div class="flex flex-col gap-2 sm:flex-row">
                   <input ref="productExcelInput" type="file" accept=".xlsx,.xls" class="hidden" @change="uploadProductExcel" />
+                  <button v-if="bulkSelection.barang.length" :disabled="bulkBusy" @click="bulkDeleteSelected('barang', 'products', products)" class="rounded-md border border-red-500 px-4 py-2 text-sm font-semibold text-red-300 transition hover:border-red-400 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-60">
+                    Hapus Terpilih ({{ bulkSelection.barang.length }})
+                  </button>
                   <button @click="downloadProductTemplate" class="rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-300">
                     Download Template
                   </button>
@@ -941,6 +992,9 @@
               </div>
               <div v-if="productImportSummary" class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
                 <p class="font-semibold">Import barang terakhir: {{ productImportSummary.productsCreated }} barang baru, {{ productImportSummary.productsUpdated }} barang diperbarui.</p>
+                <button v-if="productImportSummary.failedRowsBase64" @click="downloadFailedRows(productImportSummary, 'data_gagal_barang.xlsx')" class="mt-2 rounded-md border border-amber-500 px-3 py-1.5 text-xs font-semibold text-amber-300 transition hover:border-amber-400 hover:text-amber-200">
+                  Download Data Gagal ({{ productImportSummary.failedRowsCount }} baris)
+                </button>
               </div>
               <div class="rounded-lg border border-slate-800 bg-slate-900 p-4">
                 <div class="grid gap-3 md:grid-cols-[1fr_160px_auto_auto] md:items-end">
@@ -962,6 +1016,9 @@
                 <table class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
+                      <th class="px-4 py-3">
+                        <input type="checkbox" :checked="isAllRowsSelected('barang', products)" @change="toggleSelectAllRows('barang', products)" class="rounded border-slate-600 bg-slate-950" />
+                      </th>
                       <th class="px-4 py-3">SKU</th>
                       <th class="px-4 py-3">Nama Barang</th>
                       <th class="px-4 py-3">Jenis</th>
@@ -971,17 +1028,23 @@
                   </thead>
                   <tbody>
                     <tr v-for="row in products" :key="row.id" class="border-b border-slate-800 last:border-0">
+                      <td class="px-4 py-3">
+                        <input type="checkbox" :checked="isRowSelected('barang', row)" @change="toggleRowSelection('barang', row)" class="rounded border-slate-600 bg-slate-950" />
+                      </td>
                       <td class="px-4 py-3 text-slate-100">{{ row.sku }}</td>
                       <td class="px-4 py-3 text-slate-300">{{ row.name }}</td>
                       <td class="px-4 py-3 text-slate-300">{{ row.variant }}</td>
-                      <td class="px-4 py-3 text-right text-slate-100">{{ formatMoney(row.hpp) }}</td>
+                      <td class="px-4 py-3 text-right text-slate-100">
+                        {{ formatMoney(row.hpp) }}
+                        <span v-if="row.hpp === 0" class="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-300">HPP belum diisi</span>
+                      </td>
                       <td class="px-4 py-3 text-right">
                         <button @click="openModal('product', row)" class="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 transition hover:border-cyan-400 hover:text-cyan-300">Ubah</button>
                         <button @click="removeRow('products', row)" class="ml-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 transition hover:border-red-500 hover:text-red-300">Hapus</button>
                       </td>
                     </tr>
                     <tr v-if="!products.length">
-                      <td colspan="5" class="px-4 py-8 text-center text-slate-500">Belum ada data barang.</td>
+                      <td colspan="6" class="px-4 py-8 text-center text-slate-500">Belum ada data barang.</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1004,6 +1067,9 @@
                   <p class="mt-2 text-sm text-slate-400">Mencatat transaksi penjualan berdasarkan acuan laporan penjualan Excel.</p>
                 </div>
                 <div v-if="isBackOffice" class="flex flex-col gap-2 sm:flex-row">
+                  <button v-if="bulkSelection.penjualan.length" :disabled="bulkBusy" @click="bulkDeleteSelected('penjualan', 'sales', sales)" class="rounded-md border border-red-500 px-4 py-2 text-sm font-semibold text-red-300 transition hover:border-red-400 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-60">
+                    Hapus Terpilih ({{ bulkSelection.penjualan.length }})
+                  </button>
                   <button @click="downloadSalesTemplate" class="rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-300">
                     Download Template
                   </button>
@@ -1011,11 +1077,14 @@
                   <button @click="$refs.salesExcelInput.click()" :disabled="importBusy" class="rounded-md border border-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-300 transition hover:border-emerald-400 hover:text-emerald-200 disabled:cursor-not-allowed disabled:opacity-60">
                     Upload Excel
                   </button>
-                  <button @click="openModal('sale')" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">Tambah Penjualan</button>
+                  <button @click="openSaleCreateModal()" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">Tambah Penjualan</button>
                 </div>
               </div>
               <div v-if="importSummary" class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
                 <p class="font-semibold">Import terakhir: {{ importSummary.salesCreated }} transaksi masuk, {{ importSummary.salesSkipped }} duplikat dilewati, {{ importSummary.productsCreated }} barang baru, {{ importSummary.productsUpdated }} barang diperbarui.</p>
+                <button v-if="importSummary.failedRowsBase64" @click="downloadFailedRows(importSummary, 'data_gagal_penjualan.xlsx')" class="mt-2 rounded-md border border-amber-500 px-3 py-1.5 text-xs font-semibold text-amber-300 transition hover:border-amber-400 hover:text-amber-200">
+                  Download Data Gagal ({{ importSummary.failedRowsCount }} baris)
+                </button>
               </div>
               <div class="rounded-lg border border-slate-800 bg-slate-900 p-4">
                 <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.2fr_180px_160px_160px_140px_auto_auto] xl:items-end">
@@ -1052,6 +1121,9 @@
                 <table class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
+                      <th v-if="isBackOffice" class="px-4 py-3">
+                        <input type="checkbox" :checked="isAllRowsSelected('penjualan', sales)" @change="toggleSelectAllRows('penjualan', sales)" class="rounded border-slate-600 bg-slate-950" />
+                      </th>
                       <th class="px-4 py-3">Tanggal</th>
                       <th class="px-4 py-3">Channel</th>
                       <th class="px-4 py-3">Toko</th>
@@ -1061,11 +1133,15 @@
                       <th class="px-4 py-3 text-right">Qty</th>
                       <th class="px-4 py-3 text-right">Sub Total</th>
                       <th v-if="isOwner" class="px-4 py-3 text-right">HPP</th>
+                      <th v-if="isOwner" class="px-4 py-3 text-right">Laba</th>
                       <th class="px-4 py-3 text-right">Detail</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr v-for="row in sales" :key="row.id" class="border-b border-slate-800 last:border-0">
+                      <td v-if="isBackOffice" class="px-4 py-3">
+                        <input type="checkbox" :checked="isRowSelected('penjualan', row)" @change="toggleRowSelection('penjualan', row)" class="rounded border-slate-600 bg-slate-950" />
+                      </td>
                       <td class="px-4 py-3 text-slate-300">{{ formatDate(row.saleDate) }}</td>
                       <td class="px-4 py-3 text-slate-300">{{ row.channel }}</td>
                       <td class="px-4 py-3 text-slate-300">{{ row.storeName }}</td>
@@ -1075,6 +1151,9 @@
                       <td class="px-4 py-3 text-right text-slate-300">{{ row.totalQty }}</td>
                       <td class="px-4 py-3 text-right text-slate-100">{{ formatMoney(row.totalSubtotal) }}</td>
                       <td v-if="isOwner" class="px-4 py-3 text-right text-slate-100">{{ formatMoney(row.totalHpp) }}</td>
+                      <td v-if="isOwner" class="px-4 py-3 text-right" :class="(row.totalSubtotal - row.totalHpp) < 0 ? 'text-red-400 font-semibold' : 'text-emerald-300'">
+                        {{ formatMoney(row.totalSubtotal - row.totalHpp) }}
+                      </td>
                       <td class="px-4 py-3 text-right">
                         <button @click="viewSaleDetail(row)" title="Lihat detail penjualan" class="inline-flex items-center justify-center rounded-md border border-slate-700 p-1.5 text-slate-200 transition hover:border-cyan-400 hover:text-cyan-300">
                           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
@@ -1085,7 +1164,7 @@
                       </td>
                     </tr>
                     <tr v-if="!sales.length">
-                      <td :colspan="8 + (isOwner ? 1 : 0)" class="px-4 py-8 text-center text-slate-500">Belum ada data penjualan.</td>
+                      <td :colspan="8 + (isOwner ? 2 : 0) + (isBackOffice ? 1 : 0)" class="px-4 py-8 text-center text-slate-500">Belum ada data penjualan.</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1107,12 +1186,20 @@
                   <h3 class="mt-2 text-2xl font-semibold text-slate-50">Input beban operasional</h3>
                   <p class="mt-2 text-sm text-slate-400">Tanggal, kategori, keterangan, nominal, dan pembayaran.</p>
                 </div>
-                <button @click="openModal('operational')" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">Tambah Beban</button>
+                <div class="flex items-center gap-2">
+                  <button v-if="bulkSelection.operasional.length" :disabled="bulkBusy" @click="bulkDeleteSelected('operasional', 'expenses/operasional', operationalExpenses)" class="rounded-md border border-red-500 px-4 py-2 text-sm font-semibold text-red-300 transition hover:border-red-400 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-60">
+                    Hapus Terpilih ({{ bulkSelection.operasional.length }})
+                  </button>
+                  <button @click="openModal('operational')" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">Tambah Beban</button>
+                </div>
               </div>
               <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900">
                 <table class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
+                      <th class="px-4 py-3">
+                        <input type="checkbox" :checked="isAllRowsSelected('operasional', operationalExpenses)" @change="toggleSelectAllRows('operasional', operationalExpenses)" class="rounded border-slate-600 bg-slate-950" />
+                      </th>
                       <th class="px-4 py-3">Tanggal</th>
                       <th class="px-4 py-3">Kategori</th>
                       <th class="px-4 py-3">Keterangan</th>
@@ -1123,6 +1210,9 @@
                   </thead>
                   <tbody>
                     <tr v-for="row in operationalExpenses" :key="row.id" class="border-b border-slate-800 last:border-0">
+                      <td class="px-4 py-3">
+                        <input type="checkbox" :checked="isRowSelected('operasional', row)" @change="toggleRowSelection('operasional', row)" class="rounded border-slate-600 bg-slate-950" />
+                      </td>
                       <td class="px-4 py-3 text-slate-300">{{ formatDate(row.expenseDate) }}</td>
                       <td class="px-4 py-3 text-slate-300">{{ row.category }}</td>
                       <td class="px-4 py-3 text-slate-300">{{ row.description }}</td>
@@ -1134,7 +1224,7 @@
                       </td>
                     </tr>
                     <tr v-if="!operationalExpenses.length">
-                      <td colspan="6" class="px-4 py-8 text-center text-slate-500">Belum ada data beban operasional.</td>
+                      <td colspan="7" class="px-4 py-8 text-center text-slate-500">Belum ada data beban operasional.</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1150,6 +1240,9 @@
                 </div>
                 <div class="flex flex-col gap-2 sm:flex-row">
                   <input ref="marketingExcelInput" type="file" accept=".xlsx,.xls" class="hidden" @change="uploadMarketingExcel" />
+                  <button v-if="bulkSelection.marketing.length" :disabled="bulkBusy" @click="bulkDeleteSelected('marketing', 'expenses/marketing', marketingExpenses)" class="rounded-md border border-red-500 px-4 py-2 text-sm font-semibold text-red-300 transition hover:border-red-400 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-60">
+                    Hapus Terpilih ({{ bulkSelection.marketing.length }})
+                  </button>
                   <button @click="downloadMarketingTemplate" class="rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-300">
                     Download Template
                   </button>
@@ -1161,11 +1254,17 @@
               </div>
               <div v-if="marketingImportSummary" class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
                 <p class="font-semibold">Import marketing terakhir: {{ marketingImportSummary.marketingCreated }} data baru, {{ marketingImportSummary.marketingUpdated }} data diperbarui.</p>
+                <button v-if="marketingImportSummary.failedRowsBase64" @click="downloadFailedRows(marketingImportSummary, 'data_gagal_marketing.xlsx')" class="mt-2 rounded-md border border-amber-500 px-3 py-1.5 text-xs font-semibold text-amber-300 transition hover:border-amber-400 hover:text-amber-200">
+                  Download Data Gagal ({{ marketingImportSummary.failedRowsCount }} baris)
+                </button>
               </div>
               <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900">
                 <table class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
+                      <th class="px-4 py-3">
+                        <input type="checkbox" :checked="isAllRowsSelected('marketing', marketingExpenses)" @change="toggleSelectAllRows('marketing', marketingExpenses)" class="rounded border-slate-600 bg-slate-950" />
+                      </th>
                       <th class="px-4 py-3">Tanggal</th>
                       <th class="px-4 py-3">Kategori</th>
                       <th class="px-4 py-3">Toko</th>
@@ -1178,6 +1277,9 @@
                   </thead>
                   <tbody>
                     <tr v-for="row in marketingExpenses" :key="row.id" class="border-b border-slate-800 last:border-0">
+                      <td class="px-4 py-3">
+                        <input type="checkbox" :checked="isRowSelected('marketing', row)" @change="toggleRowSelection('marketing', row)" class="rounded border-slate-600 bg-slate-950" />
+                      </td>
                       <td class="px-4 py-3 text-slate-300">{{ formatDate(row.expenseDate) }}</td>
                       <td class="px-4 py-3 text-slate-300">{{ row.category }}</td>
                       <td class="px-4 py-3 text-slate-300">{{ row.platformStore }}</td>
@@ -1191,7 +1293,7 @@
                       </td>
                     </tr>
                     <tr v-if="!marketingExpenses.length">
-                      <td colspan="8" class="px-4 py-8 text-center text-slate-500">Belum ada data beban marketing.</td>
+                      <td colspan="9" class="px-4 py-8 text-center text-slate-500">Belum ada data beban marketing.</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1216,6 +1318,68 @@
                   Tandai Semua Sudah Dibayar
                 </button>
               </div>
+              <template v-if="salaryReportOwner.length">
+                <h4 class="text-sm font-semibold uppercase tracking-[0.15em] text-slate-400">Laporan Gaji Owner</h4>
+                <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900">
+                  <table class="min-w-full text-left text-sm">
+                    <thead class="border-b border-slate-800 text-slate-400">
+                      <tr>
+                        <th class="px-4 py-3">Nama</th>
+                        <th class="px-4 py-3 text-right">Hadir</th>
+                        <th class="px-4 py-3 text-right">Gaji Harian</th>
+                        <th class="px-4 py-3 text-right">Uang Makan</th>
+                        <th class="px-4 py-3 text-right">Jam Lembur</th>
+                        <th class="px-4 py-3 text-right">Lemburan</th>
+                        <th class="px-4 py-3 text-right">Bonus</th>
+                        <th class="px-4 py-3 text-right">THR</th>
+                        <th class="px-4 py-3 text-right">Potongan</th>
+                        <th class="px-4 py-3 text-right">Gaji Bersih</th>
+                        <th class="px-4 py-3">Status Gajian</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="row in salaryReportOwner" :key="'salary-owner-'+row.user.id" class="border-b border-slate-800 last:border-0">
+                        <td class="px-4 py-3 text-slate-100">{{ row.user.fullName }}</td>
+                        <td class="px-4 py-3 text-right text-slate-300">{{ row.presentDays }}</td>
+                        <td class="px-4 py-3 text-right text-slate-300">{{ formatMoney(row.dailyWage) }}</td>
+                        <td class="px-4 py-3 text-right text-slate-300">{{ formatMoney(row.allowanceTotal) }}</td>
+                        <td class="px-4 py-3 text-right text-slate-300">{{ row.overtimeHours.toFixed(1) }}</td>
+                        <td class="px-4 py-3 text-right text-slate-300">{{ formatMoney(row.overtimePay) }}</td>
+                        <td class="px-4 py-3 text-right">
+                          <input v-if="isOwner || isLeader" v-model.number="row.bonus" type="number" class="w-28 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-right text-sm text-slate-100 outline-none focus:border-cyan-400" />
+                          <span v-else>{{ formatMoney(row.bonus) }}</span>
+                        </td>
+                        <td class="px-4 py-3 text-right">
+                          <input v-if="isOwner || isLeader" v-model.number="row.thr" type="number" class="w-28 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-right text-sm text-slate-100 outline-none focus:border-cyan-400" />
+                          <span v-else>{{ formatMoney(row.thr) }}</span>
+                        </td>
+                        <td class="px-4 py-3 text-right">
+                          <input v-if="isOwner || isLeader" v-model.number="row.deduction" type="number" class="w-28 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-right text-sm text-slate-100 outline-none focus:border-cyan-400" />
+                          <span v-else>{{ formatMoney(row.deduction) }}</span>
+                        </td>
+                        <td class="px-4 py-3 text-right font-semibold text-emerald-300">{{ formatMoney(row.netSalary) }}</td>
+                        <td class="px-4 py-3">
+                          <div class="flex flex-col items-start gap-1.5">
+                            <span :class="row.paid ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-300'" class="rounded-full px-2.5 py-1 text-xs font-semibold">
+                              {{ row.paid ? 'Sudah Dibayar' : 'Belum Dibayar' }}
+                            </span>
+                            <div v-if="isOwner || isLeader" class="flex items-center gap-1.5">
+                              <button @click="saveSalaryAdjustment(row)" :disabled="salaryBusy" class="rounded-md border border-cyan-500 px-2.5 py-1 text-xs text-cyan-300 transition hover:border-cyan-400 disabled:cursor-not-allowed disabled:opacity-60">
+                                Simpan
+                              </button>
+                              <button @click="toggleSalaryPaid(row)" :disabled="salaryBusy" class="rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-200 transition hover:border-cyan-400 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-60">
+                                {{ row.paid ? 'Batal' : 'Tandai' }}
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+
+              <h4 class="text-sm font-semibold uppercase tracking-[0.15em] text-slate-400">Laporan Gaji Karyawan</h4>
               <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900">
                 <table class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
@@ -1234,7 +1398,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="row in salaryReport" :key="'salary-'+row.user.id" class="border-b border-slate-800 last:border-0">
+                    <tr v-for="row in salaryReportOthers" :key="'salary-'+row.user.id" class="border-b border-slate-800 last:border-0">
                       <td class="px-4 py-3 text-slate-100">{{ row.user.fullName }}</td>
                       <td class="px-4 py-3 text-right text-slate-300">{{ row.presentDays }}</td>
                       <td class="px-4 py-3 text-right text-slate-300">{{ formatMoney(row.dailyWage) }}</td>
@@ -1270,7 +1434,7 @@
                         </div>
                       </td>
                     </tr>
-                    <tr v-if="!salaryReport.length">
+                    <tr v-if="!salaryReportOthers.length">
                       <td colspan="11" class="px-4 py-8 text-center text-slate-500">Belum ada laporan gaji.</td>
                     </tr>
                   </tbody>
@@ -1847,6 +2011,130 @@
       </div>
     </div>
 
+    <div v-if="saleCreateModal.open" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+      <div class="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-lg border border-slate-800 bg-slate-900 shadow-2xl shadow-black/50 scrollbar-thin">
+        <div class="flex items-start justify-between border-b border-slate-800 px-5 py-4">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Formulir</p>
+            <h3 class="mt-1 text-xl font-semibold text-slate-50">Tambah Penjualan</h3>
+          </div>
+          <button @click="closeSaleCreateModal" class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 transition hover:border-red-500 hover:text-red-300">Tutup</button>
+        </div>
+
+        <form class="space-y-5 p-5" @submit.prevent="saveSaleCreateModal">
+          <div>
+            <label class="mb-1 block text-sm text-slate-300">No Pesanan</label>
+            <p class="mb-2 text-xs text-slate-500">Catatan: default otomatis, tapi bisa diubah</p>
+            <input v-model="saleCreateModal.orderNumber" type="text" class="w-full rounded-md border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none focus:border-cyan-400" />
+          </div>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <div>
+              <label class="mb-2 block text-sm text-slate-300">Tanggal</label>
+              <input v-model="saleCreateModal.saleDate" type="date" class="w-full rounded-md border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none focus:border-cyan-400" />
+            </div>
+            <div>
+              <label class="mb-2 block text-sm text-slate-300">Toko</label>
+              <select v-model="saleCreateModal.storeValue" class="w-full rounded-md border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none focus:border-cyan-400">
+                <option v-for="store in storeOptions" :key="'sale-create-store-'+store.value" :value="store.value">{{ store.label }}</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p class="text-sm font-semibold text-slate-100">Produk</p>
+                <p class="text-xs text-slate-500">Catatan: Nama produk dan variasi, terisi otomatis berdasarkan SKU</p>
+              </div>
+              <button type="button" @click="addSaleCreateLine" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">
+                + Tambah Produk
+              </button>
+            </div>
+
+            <div class="space-y-3">
+              <div v-for="(item, index) in saleCreateModal.items" :key="'sale-create-item-'+index" class="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+                <div class="grid gap-3 md:grid-cols-3 xl:grid-cols-7 xl:items-end">
+                  <div>
+                    <label class="mb-1 block text-xs text-slate-400">Cari SKU</label>
+                    <input v-model="item.sku" @change="lookupSaleCreateSku(item)" @blur="lookupSaleCreateSku(item)" type="text" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs text-slate-400">Nama Produk</label>
+                    <input :value="item.name" type="text" disabled class="w-full cursor-not-allowed rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-400" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs text-slate-400">Varian</label>
+                    <input :value="item.variant" type="text" disabled class="w-full cursor-not-allowed rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-400" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs text-slate-400">Jumlah<span class="text-red-400">*</span></label>
+                    <input v-model.number="item.qty" type="number" min="1" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs text-slate-400">Harga<span class="text-red-400">*</span></label>
+                    <input v-model.number="item.price" type="number" min="0" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs text-slate-400">Biaya Admin</label>
+                    <input v-model.number="item.adminFee" type="number" min="0" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400" />
+                  </div>
+                  <div class="flex items-end gap-2">
+                    <div class="flex-1">
+                      <label class="mb-1 block text-xs text-slate-400">HPP</label>
+                      <input :value="formatMoney(item.hpp)" type="text" disabled class="w-full cursor-not-allowed rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-400" />
+                    </div>
+                    <button type="button" @click="removeSaleCreateLine(index)" :disabled="saleCreateModal.items.length <= 1" title="Hapus produk" class="rounded-md border border-slate-700 p-2 text-slate-300 transition hover:border-red-500 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+                        <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6h16Z" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="mt-3 flex flex-wrap gap-4 text-xs text-slate-400">
+                  <span>Total Harga: <span class="font-semibold text-slate-200">{{ formatMoney(saleCreateLineTotal(item)) }}</span></span>
+                  <span>Total HPP: <span class="font-semibold text-slate-200">{{ formatMoney(saleCreateLineHppTotal(item)) }}</span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+            <p class="mb-3 text-sm font-semibold text-slate-100">Rincian Transaksi</p>
+            <div class="grid grid-cols-2 gap-4 text-sm sm:grid-cols-5">
+              <div>
+                <p class="text-xs text-slate-500">Total Jumlah</p>
+                <p class="mt-1 font-semibold text-slate-100">{{ formatMoney(saleCreateTotals.totalJumlah) }}</p>
+              </div>
+              <div>
+                <p class="text-xs text-slate-500">Total Biaya Admin</p>
+                <p class="mt-1 font-semibold text-red-400">{{ formatMoney(saleCreateTotals.totalBiayaAdmin) }}</p>
+              </div>
+              <div>
+                <p class="text-xs text-slate-500">Penghasilan Bersih</p>
+                <p class="mt-1 font-semibold text-cyan-300">{{ formatMoney(saleCreateTotals.penghasilanBersih) }}</p>
+              </div>
+              <div>
+                <p class="text-xs text-slate-500">Total HPP</p>
+                <p class="mt-1 font-semibold text-red-400">{{ formatMoney(saleCreateTotals.totalHpp) }}</p>
+              </div>
+              <div>
+                <p class="text-xs text-slate-500">Laba</p>
+                <p class="mt-1 font-semibold text-emerald-300">{{ formatMoney(saleCreateTotals.laba) }}</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex flex-wrap items-center justify-end gap-3 border-t border-slate-800 pt-4">
+            <button type="button" @click="closeSaleCreateModal" :disabled="saleCreateModal.busy" class="rounded-md border border-slate-700 px-4 py-2 text-sm text-slate-300 transition hover:border-slate-600 disabled:cursor-not-allowed disabled:opacity-60">Batal</button>
+            <button type="submit" :disabled="saleCreateModal.busy" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60">
+              Simpan
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <div v-if="saleDetailModal.open" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
       <div class="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-lg border border-slate-800 bg-slate-900 shadow-2xl shadow-black/50 scrollbar-thin">
         <div class="flex items-start justify-between border-b border-slate-800 px-5 py-4">
@@ -1897,6 +2185,7 @@
 
   <script>
     const { createApp } = Vue;
+    let revenueTrendChartInstance = null;
 
     const todayString = () => new Intl.DateTimeFormat('sv-SE', {
       timeZone: 'Asia/Jakarta',
@@ -1964,6 +2253,34 @@
           products: [],
           sales: [],
           limitOptions: [10, 25, 50, 100],
+          bulkSelection: {
+            karyawan: [],
+            absensi: [],
+            toko: [],
+            barang: [],
+            penjualan: [],
+            operasional: [],
+            marketing: [],
+          },
+          bulkBusy: false,
+          userFilters: {
+            search: '',
+          },
+          attendanceFilters: {
+            search: '',
+            from: '',
+            to: '',
+          },
+          storeFilters: {
+            search: '',
+          },
+          dashboardFilters: {
+            platform: '',
+            storeName: '',
+            sku: '',
+          },
+          dashboardProductOptions: [],
+          absenSelectedShiftId: null,
           productImportBusy: false,
           productImportSummary: null,
           productFilters: {
@@ -2008,6 +2325,15 @@
           profitReport: null,
           profitPdfBusy: false,
           saleDetailModal: { open: false, orderNumber: '', title: '', rows: [], loading: false },
+          saleCreateModal: {
+            open: false,
+            busy: false,
+            orderNumber: '',
+            saleDate: '',
+            storeValue: '',
+            customer: '',
+            items: [],
+          },
           faceProfile: {
             registered: false,
             faceDescriptor: null,
@@ -2066,17 +2392,20 @@
         isSalesOnly() {
           return this.user?.role === 'admin';
         },
+        isSelfService() {
+          return ['karyawan', 'admin'].includes(this.user?.role);
+        },
         roleLabel() {
           const labels = { owner: 'Owner', leader: 'Leader', admin: 'Admin', karyawan: 'Karyawan' };
           return labels[this.user?.role] || 'Karyawan';
         },
         todayAttendance() {
-          if (this.isBackOffice) return null;
+          if (!this.isSelfService) return null;
           const today = todayString();
           return this.attendanceRows.find((row) => row.workDate === today) || null;
         },
         mySalaryRow() {
-          if (this.isBackOffice) return null;
+          if (!this.isSelfService) return null;
           return this.salaryReport?.[0] || null;
         },
         salaryWeekLabel() {
@@ -2091,12 +2420,38 @@
           if (!this.user) {
             return { checkInStart: '-', checkInDeadline: '-', checkOutStart: '-', name: null };
           }
+          if (!this.todayAttendance && this.absenSelectedShiftId) {
+            const picked = this.shifts.find((shift) => shift.id === this.absenSelectedShiftId);
+            if (picked) {
+              return {
+                checkInStart: picked.checkInStart,
+                checkInDeadline: picked.checkInDeadline,
+                checkOutStart: picked.checkOutStart,
+                name: picked.name,
+              };
+            }
+          }
           return {
             checkInStart: this.user.shiftCheckInStart || this.attendanceSettings.checkInStart,
             checkInDeadline: this.user.shiftCheckInDeadline || this.attendanceSettings.checkInDeadline,
             checkOutStart: this.user.shiftCheckOutStart || this.attendanceSettings.checkOutStart,
             name: this.user.shiftName || null,
           };
+        },
+        salaryReportOwner() {
+          return this.salaryReport.filter((row) => row.user.role === 'owner');
+        },
+        salaryReportOthers() {
+          return this.salaryReport.filter((row) => row.user.role !== 'owner');
+        },
+        saleCreateTotals() {
+          const items = this.saleCreateModal.items;
+          const totalJumlah = items.reduce((sum, item) => sum + (Number(item.qty) || 0) * (Number(item.price) || 0), 0);
+          const totalBiayaAdmin = items.reduce((sum, item) => sum + (Number(item.adminFee) || 0), 0);
+          const totalHpp = items.reduce((sum, item) => sum + (Number(item.qty) || 0) * (Number(item.hpp) || 0), 0);
+          const penghasilanBersih = totalJumlah - totalBiayaAdmin;
+          const laba = penghasilanBersih - totalHpp;
+          return { totalJumlah, totalBiayaAdmin, totalHpp, penghasilanBersih, laba };
         },
         menuItems() {
           if (this.isOwner) {
@@ -2116,7 +2471,6 @@
           }
           if (this.isLeader) {
             return [
-              { key: 'dashboard', label: 'Dashboard' },
               { key: 'absensi', label: 'Absensi' },
               { key: 'penjualan', label: 'Rekap Penjualan' },
               { key: 'operasional', label: 'Beban Operasional' },
@@ -2126,7 +2480,12 @@
           }
           if (this.isSalesOnly) {
             return [
+              { key: 'dashboard', label: 'Dashboard' },
+              { key: 'wajah', label: 'Wajah' },
+              { key: 'absensi', label: 'Absensi' },
               { key: 'penjualan', label: 'Rekap Penjualan' },
+              { key: 'marketing', label: 'Beban Marketing' },
+              { key: 'gaji', label: 'Laporan Gaji' },
             ];
           }
           return [
@@ -2161,38 +2520,6 @@
             return `${this.formatDate(period.from)} - ${this.formatDate(period.to)}`;
           }
           return 'Bulan terpilih';
-        },
-        dashboardBars() {
-          const revenue = Number(this.dashboard?.totals?.revenue || 0);
-          const hpp = Number(this.dashboard?.totals?.hpp || 0);
-          const operational = Number(this.dashboard?.totals?.operational || 0);
-          const marketing = Number(this.dashboard?.totals?.marketing || 0);
-          const adminFee = Number(this.dashboard?.totals?.adminFee || 0);
-          const netProfit = Math.max(Number(this.dashboard?.totals?.netProfit || 0), 0);
-          const operatingExpense = Number(this.dashboard?.totals?.operatingExpense ?? (operational + marketing + adminFee));
-          const rows = [
-            { label: 'Omzet', a: revenue, b: hpp },
-            { label: 'Beban', a: revenue, b: operatingExpense },
-            { label: 'HPP', a: revenue, b: hpp + operatingExpense },
-            { label: 'Laba', a: netProfit, b: Math.max(revenue - netProfit, 0) },
-          ];
-          const max = Math.max(...rows.flatMap((row) => [row.a, row.b]), 1);
-          return rows.map((row) => ({
-            label: row.label,
-            primary: Math.max((row.a / max) * 100, row.a > 0 ? 8 : 2),
-            secondary: Math.max((row.b / max) * 100, row.b > 0 ? 8 : 2),
-          }));
-        },
-        assetRingStyle() {
-          const stores = Number(this.dashboard?.counts?.stores || 0);
-          const products = Number(this.dashboard?.counts?.products || 0);
-          const employees = Number(this.dashboard?.counts?.employees || 0);
-          const total = Math.max(stores + products + employees, 1);
-          const storeEnd = (stores / total) * 100;
-          const productEnd = storeEnd + (products / total) * 100;
-          return {
-            background: `conic-gradient(#22d3ee 0% ${storeEnd}%, #a78bfa ${storeEnd}% ${productEnd}%, #f59e0b ${productEnd}% 100%)`,
-          };
         },
         storeOptions() {
           return this.stores.map((store) => ({
@@ -2248,7 +2575,7 @@
           if (previous === 'wajah' && next !== 'wajah') {
             this.stopCamera();
           }
-          if (next === 'wajah' && !this.isBackOffice && this.faceProfile?.registered && !this.faceRegisterBypass) {
+          if (next === 'wajah' && this.isSelfService && this.faceProfile?.registered && !this.faceRegisterBypass) {
             this.activeTab = 'absensi';
             return;
           }
@@ -2257,6 +2584,9 @@
           }
           if (next === 'pengaturan' && this.isOwner) {
             this.attendanceSettingsForm = { ...this.attendanceSettings };
+          }
+          if (next === 'dashboard' && this.isBackOffice) {
+            this.$nextTick(() => this.renderRevenueTrendChart());
           }
         },
       },
@@ -2423,6 +2753,58 @@
             month: 'long',
             year: 'numeric',
           }).format(new Date(year, month - 1, 1));
+        },
+        formatMonthShort(value) {
+          if (!value) return '-';
+          const [yearText, monthText] = String(value).split('-');
+          const year = Number(yearText);
+          const month = Number(monthText);
+          return new Intl.DateTimeFormat('id-ID', {
+            month: 'short',
+            year: 'numeric',
+          }).format(new Date(year, month - 1, 1));
+        },
+        async applyDashboardFilters() {
+          await this.refreshAll();
+        },
+        renderRevenueTrendChart() {
+          const canvas = this.$refs.revenueTrendCanvas;
+          if (revenueTrendChartInstance) {
+            revenueTrendChartInstance.destroy();
+            revenueTrendChartInstance = null;
+          }
+          if (!canvas || typeof Chart === 'undefined') return;
+          const series = this.dashboard?.revenueTrend || [];
+          const labels = series.map((point) => this.formatMonthShort(point.month));
+          const data = series.map((point) => point.revenue);
+          revenueTrendChartInstance = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: {
+              labels,
+              datasets: [{
+                label: 'Pendapatan',
+                data,
+                borderColor: '#22d3ee',
+                backgroundColor: 'rgba(34, 211, 238, 0.15)',
+                tension: 0.35,
+                fill: true,
+                pointRadius: 3,
+                pointBackgroundColor: '#22d3ee',
+              }],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false } },
+              scales: {
+                x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
+                y: {
+                  ticks: { color: '#94a3b8', callback: (value) => this.formatMoney(value) },
+                  grid: { color: 'rgba(148,163,184,0.1)' },
+                },
+              },
+            },
+          });
         },
         dashboardPeriod() {
           const mode = this.dashboardPeriodMode || 'current';
@@ -2625,6 +3007,141 @@
             this.closeSaleDetail();
           }
         },
+        blankSaleCreateLine() {
+          return { sku: '', name: '', variant: '', qty: 1, price: 0, adminFee: 0, hpp: 0, matched: false };
+        },
+        openSaleCreateModal() {
+          const randomSuffix = Math.floor(1000000 + Math.random() * 9000000);
+          this.saleCreateModal = {
+            open: true,
+            busy: false,
+            orderNumber: `MANUAL - ${randomSuffix}`,
+            saleDate: todayString(),
+            storeValue: this.storeOptions[0]?.value || '',
+            customer: '',
+            items: [this.blankSaleCreateLine()],
+          };
+        },
+        closeSaleCreateModal() {
+          this.saleCreateModal.open = false;
+        },
+        addSaleCreateLine() {
+          this.saleCreateModal.items.push(this.blankSaleCreateLine());
+        },
+        removeSaleCreateLine(index) {
+          if (this.saleCreateModal.items.length <= 1) return;
+          this.saleCreateModal.items.splice(index, 1);
+        },
+        saleCreateLineTotal(item) {
+          return (Number(item.qty) || 0) * (Number(item.price) || 0);
+        },
+        saleCreateLineHppTotal(item) {
+          return (Number(item.qty) || 0) * (Number(item.hpp) || 0);
+        },
+        async lookupSaleCreateSku(item) {
+          const sku = (item.sku || '').trim();
+          if (!sku) {
+            item.name = '';
+            item.variant = '';
+            item.hpp = 0;
+            item.matched = false;
+            return;
+          }
+          try {
+            const result = await this.request(`/api/products?${this.buildQuery({ search: sku, limit: 5, page: 1 })}`);
+            const rows = result.data || [];
+            const match = rows.find((row) => row.sku.toLowerCase() === sku.toLowerCase());
+            if (match) {
+              item.name = match.name;
+              item.variant = match.variant;
+              item.hpp = match.hpp;
+              item.matched = true;
+            } else {
+              item.name = '';
+              item.variant = '';
+              item.hpp = 0;
+              item.matched = false;
+            }
+          } catch (error) {
+            item.matched = false;
+          }
+        },
+        async saveSaleCreateModal() {
+          const modalData = this.saleCreateModal;
+          const store = this.stores.find((s) => (s.platformStore || s.name) === modalData.storeValue);
+          if (!store) {
+            Swal.fire({ icon: 'error', title: 'Toko wajib dipilih', confirmButtonColor: '#06b6d4' });
+            return;
+          }
+          if (!modalData.saleDate) {
+            Swal.fire({ icon: 'error', title: 'Tanggal wajib diisi', confirmButtonColor: '#06b6d4' });
+            return;
+          }
+          const validItems = modalData.items.filter((item) => item.sku.trim() && Number(item.qty) > 0);
+          if (!validItems.length) {
+            Swal.fire({ icon: 'error', title: 'Minimal satu produk dengan SKU dan jumlah valid wajib diisi', confirmButtonColor: '#06b6d4' });
+            return;
+          }
+          modalData.busy = true;
+          try {
+            for (const item of validItems) {
+              await this.request('/api/sales', {
+                method: 'POST',
+                body: JSON.stringify({
+                  saleDate: modalData.saleDate,
+                  channel: store.platform,
+                  storeName: store.name,
+                  orderNumber: modalData.orderNumber,
+                  customer: modalData.customer,
+                  sku: item.sku.trim(),
+                  qty: item.qty,
+                  price: item.price,
+                  adminFee: item.adminFee,
+                }),
+              });
+            }
+            this.closeSaleCreateModal();
+            await this.refreshAll();
+            Swal.fire({ icon: 'success', title: 'Penjualan tersimpan', confirmButtonColor: '#06b6d4' });
+          } catch (error) {
+            Swal.fire({ icon: 'error', title: 'Gagal menyimpan penjualan', text: error.message || 'Silakan coba lagi.', confirmButtonColor: '#06b6d4' });
+          } finally {
+            modalData.busy = false;
+          }
+        },
+        async fetchUsers() {
+          const result = await this.request(`/api/users?${this.buildQuery(this.userFilters)}`);
+          this.users = result || [];
+        },
+        async applyUserFilters() {
+          await this.fetchUsers();
+        },
+        async resetUserFilters() {
+          this.userFilters = { search: '' };
+          await this.fetchUsers();
+        },
+        async fetchAttendance() {
+          const result = await this.request(`/api/attendance?${this.buildQuery(this.attendanceFilters)}`);
+          this.attendanceRows = result || [];
+        },
+        async applyAttendanceFilters() {
+          await this.fetchAttendance();
+        },
+        async resetAttendanceFilters() {
+          this.attendanceFilters = { search: '', from: '', to: '' };
+          await this.fetchAttendance();
+        },
+        async fetchStores() {
+          const result = await this.request(`/api/stores?${this.buildQuery(this.storeFilters)}`);
+          this.stores = result || [];
+        },
+        async applyStoreFilters() {
+          await this.fetchStores();
+        },
+        async resetStoreFilters() {
+          this.storeFilters = { search: '' };
+          await this.fetchStores();
+        },
         async applyProductFilters() {
           this.productFilters.page = 1;
           await this.fetchProducts();
@@ -2660,31 +3177,31 @@
             const { from, to } = this.dashboardPeriod();
             const dashboardQuery = this.buildQuery({ from, to });
             const periodQuery = dashboardQuery ? `?${dashboardQuery}` : '';
+            const dashboardFilterQuery = this.buildQuery({ from, to, ...this.dashboardFilters });
             const tasks = {};
 
-            if (role !== 'admin') {
-              tasks.dashboard = this.request(`/api/dashboard${periodQuery}`);
-              tasks.salaryReport = this.request(`/api/reports/salary?week=${this.salaryWeekStart}`);
-              tasks.attendanceSettings = this.request('/api/attendance/settings');
+            tasks.salaryReport = this.request(`/api/reports/salary?week=${this.salaryWeekStart}`);
+            tasks.attendanceSettings = this.request('/api/attendance/settings');
+            tasks.dashboard = this.request(`/api/dashboard${dashboardFilterQuery ? `?${dashboardFilterQuery}` : ''}`);
+            if (role === 'owner' || role === 'admin') {
+              tasks.dashboardProductOptions = this.request('/api/products?limit=100');
             }
             if (role === 'owner') {
               tasks.profitReport = this.request(`/api/reports/profit${periodQuery}`);
               tasks.shifts = this.request('/api/shifts');
-              tasks.users = this.request('/api/users');
               tasks.holidays = this.request('/api/holidays');
             }
             if (role === 'owner' || role === 'leader') {
               tasks.operationalExpenses = this.request('/api/expenses/operasional');
-              tasks.marketingExpenses = this.request('/api/expenses/marketing');
-              tasks.attendanceRows = this.request('/api/attendance');
               tasks.operationalCategories = this.request('/api/expense-categories?kind=operasional');
-              tasks.marketingCategories = this.request('/api/expense-categories?kind=marketing');
               tasks.employeeRoster = this.request('/api/employees/roster');
             }
-            if (['owner', 'leader', 'admin'].includes(role)) {
-              tasks.stores = this.request('/api/stores');
+            if (role === 'owner' || role === 'leader' || role === 'admin') {
+              tasks.marketingExpenses = this.request('/api/expenses/marketing');
+              tasks.marketingCategories = this.request('/api/expense-categories?kind=marketing');
             }
-            if (role === 'karyawan') {
+            if (this.isSelfService) {
+              tasks.shifts = this.request('/api/shifts');
               tasks.attendanceRows = this.request('/api/attendance/me');
               tasks.faceProfile = this.request('/api/face/me').catch(() => ({ registered: false, faceDescriptor: null, faceImageFilename: '', faceImageUrl: '', faceImageSize: 0, faceRegisteredAt: null }));
             }
@@ -2698,29 +3215,41 @@
             this.salaryReport = results.salaryReport || [];
             this.profitReport = results.profitReport || null;
             if (results.attendanceSettings) this.attendanceSettings = results.attendanceSettings;
+            if (results.shifts !== undefined) this.shifts = results.shifts;
+            if (results.dashboardProductOptions) {
+              this.dashboardProductOptions = results.dashboardProductOptions.data || [];
+            }
+            if (this.dashboard) {
+              await this.$nextTick();
+              this.renderRevenueTrendChart();
+            }
             if (role === 'owner') {
-              this.shifts = results.shifts;
-              this.users = results.users;
+              await this.fetchUsers();
               this.holidays = results.holidays;
             }
             if (role === 'owner' || role === 'leader') {
               this.operationalExpenses = results.operationalExpenses;
-              this.marketingExpenses = results.marketingExpenses;
-              this.attendanceRows = results.attendanceRows;
+              await this.fetchAttendance();
               this.operationalCategories = results.operationalCategories;
-              this.marketingCategories = results.marketingCategories;
               this.employeeRoster = results.employeeRoster;
             }
+            if (role === 'owner' || role === 'leader' || role === 'admin') {
+              this.marketingExpenses = results.marketingExpenses;
+              this.marketingCategories = results.marketingCategories;
+            }
             if (['owner', 'leader', 'admin'].includes(role)) {
-              this.stores = results.stores;
+              await this.fetchStores();
               await this.fetchSales();
             }
             if (role === 'owner') {
               await this.fetchProducts();
             }
-            if (role === 'karyawan') {
+            if (this.isSelfService) {
               this.attendanceRows = results.attendanceRows;
               this.faceProfile = results.faceProfile || this.faceProfile;
+              if (this.absenSelectedShiftId === null) {
+                this.absenSelectedShiftId = this.user?.shiftId || null;
+              }
             }
           } catch (error) {
             Swal.fire({
@@ -2840,6 +3369,32 @@
             Swal.fire({
               icon: 'error',
               title: 'Gagal unduh template',
+              text: error.message || 'Silakan coba lagi.',
+              confirmButtonColor: '#06b6d4',
+            });
+          }
+        },
+        downloadFailedRows(summary, filename) {
+          if (!summary?.failedRowsBase64) return;
+          try {
+            const binary = atob(summary.failedRowsBase64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i += 1) {
+              bytes[i] = binary.charCodeAt(i);
+            }
+            const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = filename;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            URL.revokeObjectURL(url);
+          } catch (error) {
+            Swal.fire({
+              icon: 'error',
+              title: 'Gagal mengunduh data gagal',
               text: error.message || 'Silakan coba lagi.',
               confirmButtonColor: '#06b6d4',
             });
@@ -3624,6 +4179,80 @@
             });
           }
         },
+        bulkRowKey(tab, row) {
+          if (tab === 'penjualan') {
+            return row.orderNumber ? `order:${row.orderNumber}` : `id:${row.id}`;
+          }
+          return row.id;
+        },
+        isRowSelected(tab, row) {
+          return this.bulkSelection[tab].includes(this.bulkRowKey(tab, row));
+        },
+        toggleRowSelection(tab, row) {
+          const key = this.bulkRowKey(tab, row);
+          const list = this.bulkSelection[tab];
+          const index = list.indexOf(key);
+          if (index === -1) {
+            list.push(key);
+          } else {
+            list.splice(index, 1);
+          }
+        },
+        isAllRowsSelected(tab, rows) {
+          return rows.length > 0 && rows.every((row) => this.isRowSelected(tab, row));
+        },
+        toggleSelectAllRows(tab, rows) {
+          this.bulkSelection[tab] = this.isAllRowsSelected(tab, rows)
+            ? []
+            : rows.map((row) => this.bulkRowKey(tab, row));
+        },
+        clearBulkSelection(tab) {
+          this.bulkSelection[tab] = [];
+        },
+        async bulkDeleteSelected(tab, endpointKey, rows) {
+          const selectedKeys = this.bulkSelection[tab];
+          if (!selectedKeys.length) return;
+          const selectedRows = rows.filter((row) => selectedKeys.includes(this.bulkRowKey(tab, row)));
+          if (!selectedRows.length) return;
+          try {
+            const confirm = await Swal.fire({
+              icon: 'warning',
+              title: `Hapus ${selectedRows.length} data terpilih?`,
+              text: 'Data yang dihapus tidak bisa dikembalikan.',
+              showCancelButton: true,
+              confirmButtonText: 'Ya, hapus',
+              cancelButtonText: 'Batal',
+              confirmButtonColor: '#ef4444',
+              cancelButtonColor: '#334155',
+            });
+            if (!confirm.isConfirmed) return;
+            this.bulkBusy = true;
+            if (tab === 'penjualan') {
+              const items = selectedRows.map((row) => ({ id: row.id, orderNumber: row.orderNumber || '' }));
+              await this.request('/api/sales/bulk-delete', { method: 'POST', body: JSON.stringify({ items }) });
+            } else {
+              const ids = selectedRows.map((row) => row.id);
+              await this.request(`/api/${endpointKey}/bulk-delete`, { method: 'POST', body: JSON.stringify({ ids }) });
+            }
+            this.clearBulkSelection(tab);
+            await this.refreshAll();
+            Swal.fire({
+              icon: 'success',
+              title: 'Terhapus',
+              text: 'Data terpilih berhasil dihapus.',
+              confirmButtonColor: '#06b6d4',
+            });
+          } catch (error) {
+            Swal.fire({
+              icon: 'error',
+              title: 'Gagal menghapus',
+              text: error.message || 'Silakan coba lagi.',
+              confirmButtonColor: '#06b6d4',
+            });
+          } finally {
+            this.bulkBusy = false;
+          }
+        },
         async ensureFaceModels() {
           if (window.__TOPI_FACE_MODELS_READY__) return true;
           if (typeof faceapi === 'undefined') {
@@ -3783,8 +4412,8 @@
         },
         async saveFace() {
           try {
-            if (this.user.role !== 'karyawan') {
-              throw new Error('Daftar wajah hanya untuk karyawan.');
+            if (!['karyawan', 'admin'].includes(this.user.role)) {
+              throw new Error('Daftar wajah hanya untuk karyawan atau admin.');
             }
             if (!this.faceCapturedBlob) {
               throw new Error('Ambil foto wajah terlebih dahulu.');
@@ -3823,8 +4452,8 @@
         },
         async startAbsenCapture() {
           try {
-            if (this.user.role !== 'karyawan') {
-              throw new Error('Absensi hanya untuk karyawan.');
+            if (!['karyawan', 'admin'].includes(this.user.role)) {
+              throw new Error('Absensi hanya untuk karyawan atau admin.');
             }
             if (!this.faceProfile?.registered) {
               throw new Error('Wajah belum terdaftar. Silakan daftar wajah dulu.');
@@ -3852,8 +4481,8 @@
         },
         async absenSekarang() {
           try {
-            if (this.user.role !== 'karyawan') {
-              throw new Error('Absensi hanya untuk karyawan.');
+            if (!['karyawan', 'admin'].includes(this.user.role)) {
+              throw new Error('Absensi hanya untuk karyawan atau admin.');
             }
             if (!this.faceProfile?.registered) {
               throw new Error('Wajah belum terdaftar. Silakan daftar wajah dulu.');
@@ -3889,6 +4518,9 @@
               locationName = await this.reverseGeocode(latitude, longitude);
             }
             let body = { note: 'Absensi melalui kamera', photoUrl: uploaded.url };
+            if (!this.todayAttendance && this.absenSelectedShiftId) {
+              body = { ...body, shiftId: this.absenSelectedShiftId };
+            }
             if (latitude !== null && longitude !== null) {
               body = { ...body, latitude, longitude, locationName };
             }

@@ -18,7 +18,7 @@ const JWT_SECRET =  'topi';
 const DB_HOST = process.env.MYSQL_HOST || '127.0.0.1';
 const DB_PORT = Number(process.env.MYSQL_PORT || 3306);
 const DB_USER = process.env.MYSQL_USER || 'root';
-const DB_PASSWORD = process.env.MYSQL_PASSWORD || 'alen';
+const DB_PASSWORD = process.env.MYSQL_PASSWORD || 'dita';
 const DB_NAME = 'topi';
 
 app.use(cors());
@@ -904,6 +904,20 @@ const salesRecapAccess = (req, res, next) => {
   return next();
 };
 
+const ownerLeaderAdmin = (req, res, next) => {
+  if (!['owner', 'leader', 'admin'].includes(req.user?.role)) {
+    return res.status(403).json({ ok: false, message: 'Akses ini tidak tersedia untuk role Anda.' });
+  }
+  return next();
+};
+
+const selfServiceRole = (req, res, next) => {
+  if (!['karyawan', 'admin'].includes(req.user?.role)) {
+    return res.status(403).json({ ok: false, message: 'Fitur ini hanya untuk karyawan atau admin.' });
+  }
+  return next();
+};
+
 async function loadCurrentUser(req, res, next) {
   try {
     const user = await User.findByPk(req.auth.id, { include: [Shift] });
@@ -950,8 +964,111 @@ function buildSalaryRow(user, presentDays, attendanceRecords, paymentRow) {
   };
 }
 
-async function buildProfitSummary(from, to) {
-  const saleWhere = dateWhere('saleDate', from, to);
+const SALE_GROUP_KEY_SQL = "CASE WHEN `order_number` IS NULL OR `order_number` = '' THEN CONCAT('__row_', `id`) ELSE `order_number` END";
+
+function buildDashboardSaleConditions({ from, to, channel, storeName, sku } = {}) {
+  const conditions = [];
+  const replacements = {};
+  if (from) {
+    conditions.push('`sales`.`sale_date` >= :from');
+    replacements.from = from;
+  }
+  if (to) {
+    conditions.push('`sales`.`sale_date` <= :to');
+    replacements.to = to;
+  }
+  if (channel) {
+    conditions.push('`sales`.`channel` = :channel');
+    replacements.channel = channel;
+  }
+  if (storeName) {
+    conditions.push('`sales`.`store_name` = :storeName');
+    replacements.storeName = storeName;
+  }
+  if (sku) {
+    conditions.push('`sales`.`sku` = :sku');
+    replacements.sku = sku;
+  }
+  return { whereSql: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '', replacements };
+}
+
+async function countDistinctOrders(filters) {
+  const { whereSql, replacements } = buildDashboardSaleConditions(filters);
+  const rows = await sequelize.query(
+    `SELECT COUNT(*) AS total FROM (SELECT 1 FROM \`sales\` ${whereSql} GROUP BY ${SALE_GROUP_KEY_SQL}) t`,
+    { replacements, type: sequelize.QueryTypes.SELECT },
+  );
+  return toInt(rows[0]?.total, 0);
+}
+
+async function buildRevenueTrend(filters, monthsBack = 11) {
+  const anchor = filters.to ? new Date(`${filters.to}T00:00:00`) : now();
+  const start = new Date(anchor.getFullYear(), anchor.getMonth() - monthsBack, 1);
+  const startMonth = `${start.getFullYear()}-${pad(start.getMonth() + 1)}-01`;
+  const { whereSql, replacements } = buildDashboardSaleConditions({ ...filters, from: startMonth, to: undefined });
+  const rows = await sequelize.query(
+    `SELECT DATE_FORMAT(\`sale_date\`, '%Y-%m') AS month, SUM(\`subtotal\`) AS revenue
+     FROM \`sales\`
+     ${whereSql}
+     GROUP BY month
+     ORDER BY month ASC`,
+    { replacements, type: sequelize.QueryTypes.SELECT },
+  );
+  const byMonth = new Map(rows.map((row) => [row.month, toInt(row.revenue, 0)]));
+  const series = [];
+  for (let i = monthsBack; i >= 0; i -= 1) {
+    const d = new Date(anchor.getFullYear(), anchor.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+    series.push({ month: key, revenue: byMonth.get(key) || 0 });
+  }
+  return series;
+}
+
+async function buildPlatformContribution(filters) {
+  const { whereSql, replacements } = buildDashboardSaleConditions(filters);
+  const rows = await sequelize.query(
+    `SELECT \`channel\`, \`store_name\` AS storeName,
+       COUNT(DISTINCT ${SALE_GROUP_KEY_SQL}) AS totalOrders,
+       SUM(\`qty\`) AS totalQty,
+       SUM(\`subtotal\`) AS totalSales
+     FROM \`sales\`
+     ${whereSql}
+     GROUP BY \`channel\`, \`store_name\`
+     ORDER BY totalSales DESC`,
+    { replacements, type: sequelize.QueryTypes.SELECT },
+  );
+  return rows.map((row) => ({
+    label: `${row.channel} ${row.storeName}`.trim(),
+    totalOrders: toInt(row.totalOrders, 0),
+    totalQty: toInt(row.totalQty, 0),
+    totalSales: toInt(row.totalSales, 0),
+  }));
+}
+
+async function buildTopProducts(filters, limit = 5) {
+  const { whereSql, replacements } = buildDashboardSaleConditions(filters);
+  const rows = await sequelize.query(
+    `SELECT \`sales\`.\`sku\` AS sku, MIN(\`products\`.\`name\`) AS name,
+       SUM(\`sales\`.\`qty\`) AS qty, SUM(\`sales\`.\`subtotal\`) AS totalSales
+     FROM \`sales\`
+     LEFT JOIN \`products\` ON \`products\`.\`sku\` = \`sales\`.\`sku\`
+     ${whereSql}
+     GROUP BY \`sales\`.\`sku\`
+     ORDER BY totalSales DESC
+     LIMIT ${Number(limit)}`,
+    { replacements, type: sequelize.QueryTypes.SELECT },
+  );
+  return rows.map((row, index) => ({
+    rank: index + 1,
+    sku: row.sku,
+    name: row.name || row.sku,
+    qty: toInt(row.qty, 0),
+    totalSales: toInt(row.totalSales, 0),
+  }));
+}
+
+async function buildProfitSummary(from, to, saleFilters = {}) {
+  const saleWhere = { ...dateWhere('saleDate', from, to), ...saleFilters };
   const expenseWhere = dateWhere('expenseDate', from, to);
   const reportDate = new Intl.DateTimeFormat('id-ID', {
     day: 'numeric',
@@ -1172,86 +1289,39 @@ async function computeGajiTotalForPeriod(from, to) {
   return total;
 }
 
-async function buildDashboard(from, to, { includeHpp = true } = {}) {
-  const profitSummary = await buildProfitSummary(from, to);
+async function buildDashboard(from, to, { platform = '', storeName = '', sku = '' } = {}) {
+  const saleFilters = { from, to, channel: platform, storeName, sku };
+  const profitSummary = await buildProfitSummary(from, to, {
+    ...(platform ? { channel: platform } : {}),
+    ...(storeName ? { storeName } : {}),
+    ...(sku ? { sku } : {}),
+  });
   const gajiKaryawan = await computeGajiTotalForPeriod(from, to);
   const totalBebanPeriode = profitSummary.totals.operational + profitSummary.totals.marketing + profitSummary.totals.adminFee + gajiKaryawan;
-  const saleWhere = dateWhere('saleDate', from, to);
-  const expenseWhere = dateWhere('expenseDate', from, to);
-  const [
-    totalEmployees,
-    totalFaces,
-    totalStores,
-    totalProducts,
-    attendanceToday,
-    recentSales,
-    recentOperational,
-    recentMarketing,
-    recentAttendance,
-  ] = await Promise.all([
-    User.count({ where: { role: 'karyawan', active: true } }),
-    User.count({
-      where: {
-        role: 'karyawan',
-        active: true,
-        [Op.or]: [
-          { faceDescriptor: { [Op.ne]: null } },
-          { faceImageUrl: { [Op.ne]: null } },
-        ],
-      },
-    }),
-    Store.count(),
-    Product.count(),
-    Attendance.count({
-      where: {
-        workDate: jakartaDate(),
-      },
-    }),
-    Sale.findAll({
-      where: saleWhere,
-      order: [['saleDate', 'DESC'], ['createdAt', 'DESC']],
-      limit: 5,
-    }),
-    OperationalExpense.findAll({
-      where: expenseWhere,
-      order: [['createdAt', 'DESC']],
-      limit: 5,
-    }),
-    MarketingExpense.findAll({
-      where: expenseWhere,
-      order: [['createdAt', 'DESC']],
-      limit: 5,
-    }),
-    Attendance.findAll({
-      include: [{ model: User }],
-      order: [['createdAt', 'DESC']],
-      limit: 5,
-    }),
+
+  const [totalOrders, revenueTrend, platformContribution, topProducts] = await Promise.all([
+    countDistinctOrders(saleFilters),
+    buildRevenueTrend(saleFilters),
+    buildPlatformContribution(saleFilters),
+    buildTopProducts(saleFilters),
   ]);
 
   return {
     period: { from, to },
     counts: {
-      employees: totalEmployees,
-      faces: totalFaces,
-      stores: totalStores,
-      products: totalProducts,
       sales: profitSummary.counts.sales,
       operational: profitSummary.counts.operational,
       marketing: profitSummary.counts.marketing,
-      attendanceToday,
+      totalOrders,
     },
     totals: {
       ...profitSummary.totals,
       gajiKaryawan,
       totalBebanPeriode,
     },
-    recent: {
-      sales: recentSales.map((row) => serializeSale(row, { includeHpp })),
-      operational: recentOperational.map(serializeOperational),
-      marketing: recentMarketing.map(serializeMarketing),
-      attendance: recentAttendance.map(serializeAttendance),
-    },
+    revenueTrend,
+    platformContribution,
+    topProducts,
   };
 }
 
@@ -1349,6 +1419,19 @@ function createSimpleCrudRoutes(prefix, model, serializer, parser, options = {})
       return res.status(500).json({ ok: false, message: 'Gagal menghapus data.' });
     }
   });
+
+  app.post(`/api/${prefix}/bulk-delete`, ...authRequired, writeMiddleware, async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body.ids) ? req.body.ids.map((id) => toInt(id, null)).filter((id) => id !== null) : [];
+      if (!ids.length) {
+        return res.status(400).json({ ok: false, message: 'Pilih minimal satu data untuk dihapus.' });
+      }
+      const deleted = await model.destroy({ where: { id: { [Op.in]: ids } } });
+      return res.json({ ok: true, message: `${deleted} data berhasil dihapus.`, data: { deleted } });
+    } catch (error) {
+      return res.status(500).json({ ok: false, message: 'Gagal menghapus data terpilih.' });
+    }
+  });
 }
 
 async function parseShift(body) {
@@ -1409,13 +1492,13 @@ function parseOperational(body) {
   const expenseDate = toText(body.expenseDate || body.date);
   const category = toText(body.category);
   const description = toText(body.description);
-  if (!expenseDate || !category || !description) {
-    throw new Error('Tanggal, kategori, dan keterangan wajib diisi.');
+  if (!expenseDate || !category) {
+    throw new Error('Tanggal dan kategori wajib diisi.');
   }
   return {
     expenseDate,
     category,
-    description,
+    description: description || '-',
     nominal: money(body.nominal),
     paymentMethod: toText(body.paymentMethod) || 'Transfer',
   };
@@ -1426,8 +1509,8 @@ async function parseMarketing(body) {
   const category = toText(body.category);
   const platformStore = toText(body.platformStore || body.platformAndStore);
   const description = toText(body.description || body.note);
-  if (!expenseDate || !category || !platformStore || !description) {
-    throw new Error('Tanggal, kategori, platform & toko, dan keterangan wajib diisi.');
+  if (!expenseDate || !category || !platformStore) {
+    throw new Error('Tanggal, kategori, dan platform & toko wajib diisi.');
   }
   const nominal = money(body.nominal);
   const taxRate = body.taxRate === undefined || body.taxRate === null || body.taxRate === '' ? 0 : Number(body.taxRate);
@@ -1439,7 +1522,7 @@ async function parseMarketing(body) {
     category,
     platformId: null,
     platformStore,
-    description,
+    description: description || '-',
     nominal,
     taxRate: Number.isFinite(taxRate) ? taxRate : 0,
     totalTax,
@@ -1602,7 +1685,7 @@ async function createImportedSale(record, productHpp, summary, sheetStats, occur
   const adminFee = Math.abs(record.adminFee || 0);
 
   if (!channel || !storeName || !saleDate || !sku || qty <= 0) {
-    return;
+    return 'invalid';
   }
   if (!summary.firstSaleDate || saleDate < summary.firstSaleDate) {
     summary.firstSaleDate = saleDate;
@@ -1629,7 +1712,7 @@ async function createImportedSale(record, productHpp, summary, sheetStats, occur
   if (existingCount >= occurrence) {
     summary.salesSkipped += 1;
     sheetStats.skipped += 1;
-    return;
+    return 'duplicate';
   }
 
   await Sale.create({
@@ -1649,6 +1732,7 @@ async function createImportedSale(record, productHpp, summary, sheetStats, occur
   });
   summary.salesCreated += 1;
   sheetStats.created += 1;
+  return 'created';
 }
 
 async function importSalesWorkbook(buffer, fileName = '') {
@@ -1663,6 +1747,7 @@ async function importSalesWorkbook(buffer, fileName = '') {
     sheets: [],
   };
   const occurrenceCounts = new Map();
+  const sheetFailureGroups = [];
 
   const productSheet = workbook.Sheets['Data Barang'];
   const productHpp = new Map();
@@ -1716,8 +1801,12 @@ async function importSalesWorkbook(buffer, fileName = '') {
     const map = headerIndex(headers);
     const format = detectSaleTemplate(headers);
     const sheetStats = { created: 0, skipped: 0 };
+    const sheetFailedRows = [];
+    const dataRows = rows.slice(headerRowIndex + 1);
 
-    for (const row of rows.slice(headerRowIndex + 1)) {
+    for (let rowIdx = 0; rowIdx < dataRows.length; rowIdx += 1) {
+      const row = dataRows[rowIdx];
+      const rowNumber = headerRowIndex + rowIdx + 2;
       let record = null;
 
       if (format === 'pesanan') {
@@ -1797,9 +1886,15 @@ async function importSalesWorkbook(buffer, fileName = '') {
       }
 
       if (!record || !record.sku || !record.saleDate) {
+        if ((row || []).some((cell) => cell !== null && cell !== undefined && cell !== '')) {
+          sheetFailedRows.push({ rowNumber, reason: 'SKU atau Tanggal kosong', raw: row || [] });
+        }
         continue;
       }
-      await createImportedSale(record, productHpp, summary, sheetStats, occurrenceCounts);
+      const result = await createImportedSale(record, productHpp, summary, sheetStats, occurrenceCounts);
+      if (result === 'invalid') {
+        sheetFailedRows.push({ rowNumber, reason: 'Channel, toko, tanggal, SKU, atau jumlah tidak lengkap', raw: row || [] });
+      }
     }
 
     summary.sheets.push({
@@ -1808,6 +1903,17 @@ async function importSalesWorkbook(buffer, fileName = '') {
       created: sheetStats.created,
       skipped: sheetStats.skipped,
     });
+
+    if (sheetFailedRows.length) {
+      const headerRow = (headers || []).map((cell) => excelText(cell));
+      sheetFailureGroups.push({ sheetName, headerRow, failedRows: sheetFailedRows });
+    }
+  }
+
+  const totalFailed = sheetFailureGroups.reduce((sum, group) => sum + group.failedRows.length, 0);
+  if (totalFailed) {
+    summary.failedRowsCount = totalFailed;
+    summary.failedRowsBase64 = buildFailedRowsWorkbook(sheetFailureGroups).toString('base64');
   }
 
   return summary;
@@ -1871,6 +1977,26 @@ const excelPercent = (value) => {
   return parsed > 1 ? parsed / 100 : parsed;
 };
 
+function buildFailedRowsWorkbook(sheetGroups) {
+  const workbook = XLSX.utils.book_new();
+  let appended = 0;
+  for (const group of sheetGroups) {
+    if (!group.failedRows.length) continue;
+    const sheetRows = [['Baris Excel', 'Alasan Gagal', ...group.headerRow]];
+    for (const failed of group.failedRows) {
+      sheetRows.push([failed.rowNumber, failed.reason, ...failed.raw.map((cell) => (cell === undefined || cell === null ? '' : cell))]);
+    }
+    const sheet = XLSX.utils.aoa_to_sheet(sheetRows);
+    const safeName = String(group.sheetName || 'Data Gagal').slice(0, 28).replace(/[\\/*?:[\]]/g, '_') || 'Data Gagal';
+    XLSX.utils.book_append_sheet(workbook, sheet, safeName);
+    appended += 1;
+  }
+  if (!appended) {
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['Baris Excel', 'Alasan Gagal']]), 'Data Gagal');
+  }
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+}
+
 async function importProductsWorkbook(buffer) {
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true, dateNF: 'yyyy-mm-dd' });
   const sheetName = workbook.SheetNames.find((name) => normalizeHeader(name) === normalizeHeader('Data Barang')) || workbook.SheetNames[0];
@@ -1892,13 +2018,20 @@ async function importProductsWorkbook(buffer) {
   };
   let created = 0;
   let updated = 0;
+  const failedRows = [];
 
-  for (const row of rows.slice(headerRowIndex + 1)) {
+  const dataRows = rows.slice(headerRowIndex + 1);
+  for (let i = 0; i < dataRows.length; i += 1) {
+    const row = dataRows[i];
+    const rowNumber = headerRowIndex + i + 2;
     const sku = textByHeader(row, map, PRODUCT_SKU_ALIASES);
     const name = textByHeader(row, map, ['Nama Barang']);
     const variant = textByHeader(row, map, PRODUCT_VARIANT_ALIASES);
     const hpp = numberByHeader(row, map, ['HPP']);
     if (!sku || !name) {
+      if ((row || []).some((cell) => cell !== null && cell !== undefined && cell !== '')) {
+        failedRows.push({ rowNumber, reason: 'SKU atau Nama Barang kosong', raw: row || [] });
+      }
       continue;
     }
 
@@ -1930,6 +2063,12 @@ async function importProductsWorkbook(buffer) {
     created,
     updated,
   });
+
+  if (failedRows.length) {
+    const headerRow = (rows[headerRowIndex] || []).map((cell) => excelText(cell));
+    summary.failedRowsCount = failedRows.length;
+    summary.failedRowsBase64 = buildFailedRowsWorkbook([{ sheetName: 'Data Gagal', headerRow, failedRows }]).toString('base64');
+  }
 
   return summary;
 }
@@ -1976,17 +2115,32 @@ async function importMarketingWorkbook(buffer) {
     marketingUpdated: 0,
     sheets: [],
   };
+  const failedRows = [];
 
-  for (const row of rows.slice(headerRowIndex + 1)) {
+  const dataRows = rows.slice(headerRowIndex + 1);
+  for (let i = 0; i < dataRows.length; i += 1) {
+    const row = dataRows[i];
+    const rowNumber = headerRowIndex + i + 2;
     const expenseDate = dateByHeader(row, map, ['Tanggal']);
     const category = textByHeader(row, map, ['Kategori']);
     const platformStore = textByHeader(row, map, ['Platform & Toko']);
     const description = textByHeader(row, map, ['Keterangan']);
     const nominal = numberByHeader(row, map, ['Nominal']);
-    const taxRate = excelPercent(cellByHeader(row, map, ['Pajak Iklan']));
+    const taxCell = cellByHeader(row, map, ['Pajak Iklan']);
+    const taxCellBlank = taxCell === undefined || taxCell === null || taxCell === '';
+    let taxRate = excelPercent(taxCell);
+    if (taxCellBlank && platformStore) {
+      const matchingStore = await Store.findOne({ where: { platformStore } });
+      if (matchingStore) {
+        taxRate = matchingStore.taxRate || 0;
+      }
+    }
     const totalTax = numberByHeader(row, map, ['Total Pajak']) || Math.round(nominal * taxRate);
 
     if (!expenseDate || !category || !platformStore) {
+      if ((row || []).some((cell) => cell !== null && cell !== undefined && cell !== '')) {
+        failedRows.push({ rowNumber, reason: 'Tanggal, kategori, atau platform & toko kosong', raw: row || [] });
+      }
       continue;
     }
 
@@ -2031,6 +2185,12 @@ async function importMarketingWorkbook(buffer) {
     updated,
   });
 
+  if (failedRows.length) {
+    const headerRow = (rows[headerRowIndex] || []).map((cell) => excelText(cell));
+    summary.failedRowsCount = failedRows.length;
+    summary.failedRowsBase64 = buildFailedRowsWorkbook([{ sheetName: 'Data Gagal', headerRow, failedRows }]).toString('base64');
+  }
+
   return summary;
 }
 
@@ -2061,7 +2221,11 @@ async function resetDatabase() {
 }
 
 createSimpleCrudRoutes('shifts', Shift, serializeShift, parseShift, {});
-createSimpleCrudRoutes('stores', Store, serializeStore, parseStore, { include: [Platform], reload: true });
+createSimpleCrudRoutes('stores', Store, serializeStore, parseStore, {
+  include: [Platform],
+  reload: true,
+  searchFields: ['platform', 'name', 'platformStore'],
+});
 createSimpleCrudRoutes('products', Product, serializeProduct, parseProduct, {
   paginated: true,
   searchFields: ['sku', 'name', 'variant'],
@@ -2108,7 +2272,6 @@ app.get('/api/sales/template', ...authRequired, salesRecapAccess, async (req, re
   }
 });
 
-const SALE_GROUP_KEY_SQL = "CASE WHEN `order_number` IS NULL OR `order_number` = '' THEN CONCAT('__row_', `id`) ELSE `order_number` END";
 
 async function fetchGroupedSales({ search, storeName, from, to, limit, offset }) {
   const conditions = [];
@@ -2292,8 +2455,32 @@ app.delete('/api/sales/:id', ...authRequired, salesRecapAccess, async (req, res)
     return res.status(500).json({ ok: false, message: 'Gagal menghapus penjualan.' });
   }
 });
+
+app.post('/api/sales/bulk-delete', ...authRequired, salesRecapAccess, async (req, res) => {
+  try {
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+    if (!items.length) {
+      return res.status(400).json({ ok: false, message: 'Pilih minimal satu data untuk dihapus.' });
+    }
+    let deleted = 0;
+    for (const item of items) {
+      const orderNumber = toText(item?.orderNumber);
+      if (orderNumber) {
+        deleted += await Sale.destroy({ where: { orderNumber } });
+      } else {
+        const id = toInt(item?.id, null);
+        if (id !== null) {
+          deleted += await Sale.destroy({ where: { id } });
+        }
+      }
+    }
+    return res.json({ ok: true, message: `${deleted} baris penjualan berhasil dihapus.`, data: { deleted } });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Gagal menghapus penjualan terpilih.' });
+  }
+});
 createSimpleCrudRoutes('expenses/operasional', OperationalExpense, serializeOperational, parseOperational, { writeMiddleware: ownerOrLeader });
-createSimpleCrudRoutes('expenses/marketing', MarketingExpense, serializeMarketing, parseMarketing, { include: [Platform], reload: true, writeMiddleware: ownerOrLeader });
+createSimpleCrudRoutes('expenses/marketing', MarketingExpense, serializeMarketing, parseMarketing, { include: [Platform], reload: true, writeMiddleware: ownerLeaderAdmin });
 
 app.get('/api/expense-categories', ...authRequired, async (req, res) => {
   try {
@@ -2306,7 +2493,7 @@ app.get('/api/expense-categories', ...authRequired, async (req, res) => {
   }
 });
 
-app.post('/api/expense-categories', ...authRequired, ownerOrLeader, async (req, res) => {
+app.post('/api/expense-categories', ...authRequired, ownerLeaderAdmin, async (req, res) => {
   try {
     const name = toText(req.body.name);
     const kind = toText(req.body.kind);
@@ -2320,7 +2507,7 @@ app.post('/api/expense-categories', ...authRequired, ownerOrLeader, async (req, 
   }
 });
 
-app.get('/api/expenses/marketing/template', ...authRequired, ownerOrLeader, async (req, res) => {
+app.get('/api/expenses/marketing/template', ...authRequired, ownerLeaderAdmin, async (req, res) => {
   try {
     const buffer = buildMarketingTemplateBuffer();
     res.setHeader('Content-Disposition', 'attachment; filename="template_beban_marketing.xlsx"');
@@ -2331,7 +2518,7 @@ app.get('/api/expenses/marketing/template', ...authRequired, ownerOrLeader, asyn
   }
 });
 
-app.post('/api/expenses/marketing/import-excel', ...authRequired, ownerOrLeader, upload.single('file'), async (req, res) => {
+app.post('/api/expenses/marketing/import-excel', ...authRequired, ownerLeaderAdmin, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ ok: false, message: 'File Excel wajib diunggah.' });
@@ -2406,7 +2593,8 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/users', ...authRequired, ownerOnly, async (req, res) => {
   try {
-    const rows = await User.findAll({ order: [['createdAt', 'DESC']], include: [Shift] });
+    const where = searchWhere(req.query.search, ['fullName', 'username', 'jobTitle']);
+    const rows = await User.findAll({ where, order: [['createdAt', 'DESC']], include: [Shift] });
     return res.json({ ok: true, data: rows.map(serializeUser) });
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Gagal memuat karyawan.' });
@@ -2504,9 +2692,24 @@ app.delete('/api/users/:id', ...authRequired, ownerOnly, async (req, res) => {
   }
 });
 
+app.post('/api/users/bulk-delete', ...authRequired, ownerOnly, async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body.ids)
+      ? req.body.ids.map((id) => toInt(id, null)).filter((id) => id !== null && id !== req.user.id)
+      : [];
+    if (!ids.length) {
+      return res.status(400).json({ ok: false, message: 'Pilih minimal satu karyawan untuk dihapus.' });
+    }
+    const deleted = await User.destroy({ where: { id: { [Op.in]: ids } } });
+    return res.json({ ok: true, message: `${deleted} karyawan berhasil dihapus.`, data: { deleted } });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Gagal menghapus karyawan terpilih.' });
+  }
+});
+
 app.get('/api/face/me', ...authRequired, async (req, res) => {
-  if (req.user.role !== 'karyawan') {
-    return res.status(403).json({ ok: false, message: 'Daftar wajah hanya tersedia untuk karyawan.' });
+  if (!['karyawan', 'admin'].includes(req.user.role)) {
+    return res.status(403).json({ ok: false, message: 'Daftar wajah hanya tersedia untuk karyawan atau admin.' });
   }
   return res.json({
     ok: true,
@@ -2523,8 +2726,8 @@ app.get('/api/face/me', ...authRequired, async (req, res) => {
 
 app.post('/api/face/register', ...authRequired, async (req, res) => {
   try {
-    if (req.user.role !== 'karyawan') {
-      return res.status(403).json({ ok: false, message: 'Daftar wajah hanya untuk karyawan.' });
+    if (!['karyawan', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ ok: false, message: 'Daftar wajah hanya untuk karyawan atau admin.' });
     }
     const descriptor = req.body.descriptor;
     const faceImageUrl = toText(req.body.faceImageUrl);
@@ -2569,10 +2772,19 @@ app.get('/api/attendance/me', ...authRequired, async (req, res) => {
 
 app.get('/api/attendance', ...authRequired, ownerOrLeader, async (req, res) => {
   try {
+    const search = toText(req.query.search);
+    const from = toText(req.query.from);
+    const to = toText(req.query.to);
+    const where = { ...dateWhere('workDate', from, to) };
+    if (search) {
+      where[Op.and] = [sequelize.where(sequelize.col('User.full_name'), { [Op.like]: `%${search}%` })];
+    }
     const rows = await Attendance.findAll({
+      where,
       include: [{ model: User }],
       order: [['workDate', 'DESC'], ['createdAt', 'DESC']],
       limit: 400,
+      subQuery: false,
     });
     return res.json({ ok: true, data: rows.map(serializeAttendance) });
   } catch (error) {
@@ -2763,10 +2975,23 @@ app.delete('/api/attendance/:id', ...authRequired, ownerOrLeader, async (req, re
   }
 });
 
+app.post('/api/attendance/bulk-delete', ...authRequired, ownerOrLeader, async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body.ids) ? req.body.ids.map((id) => toInt(id, null)).filter((id) => id !== null) : [];
+    if (!ids.length) {
+      return res.status(400).json({ ok: false, message: 'Pilih minimal satu data absensi untuk dihapus.' });
+    }
+    const deleted = await Attendance.destroy({ where: { id: { [Op.in]: ids } } });
+    return res.json({ ok: true, message: `${deleted} data absensi berhasil dihapus.`, data: { deleted } });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Gagal menghapus data absensi terpilih.' });
+  }
+});
+
 app.post('/api/attendance/check-in', ...authRequired, async (req, res) => {
   try {
-    if (req.user.role !== 'karyawan') {
-      return res.status(403).json({ ok: false, message: 'Absensi wajah hanya untuk karyawan.' });
+    if (!['karyawan', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ ok: false, message: 'Absensi wajah hanya untuk karyawan atau admin.' });
     }
     const photoUrl = toText(req.body.photoUrl);
     if (!photoUrl) {
@@ -2774,7 +2999,17 @@ app.post('/api/attendance/check-in', ...authRequired, async (req, res) => {
     }
     const locationName = toText(req.body.locationName);
     const settings = await getAttendanceSettings();
-    const shiftWindow = resolveShiftWindow(req.user, settings);
+    let shiftWindow = resolveShiftWindow(req.user, settings);
+    if (req.body.shiftId) {
+      const overrideShift = await Shift.findByPk(toInt(req.body.shiftId, null));
+      if (overrideShift) {
+        shiftWindow = {
+          checkInDeadline: overrideShift.checkInDeadline,
+          lateToleranceMinutes: overrideShift.lateToleranceMinutes,
+          name: overrideShift.name,
+        };
+      }
+    }
     const today = jakartaDate();
     let row = await Attendance.findOne({
       where: {
@@ -2852,10 +3087,7 @@ app.post('/api/attendance/check-in', ...authRequired, async (req, res) => {
 });
 
 function salaryScopeWhere(requester) {
-  if (requester.role === 'admin') {
-    return null;
-  }
-  if (requester.role === 'karyawan') {
+  if (requester.role === 'karyawan' || requester.role === 'admin') {
     return { id: requester.id, active: true };
   }
   if (requester.role === 'leader') {
@@ -3138,12 +3370,12 @@ app.get('/api/reports/profit/pdf', ...authRequired, ownerOnly, async (req, res) 
 
 app.get('/api/dashboard', ...authRequired, async (req, res) => {
   try {
-    if (req.user.role === 'admin') {
-      return res.status(403).json({ ok: false, message: 'Dashboard tidak tersedia untuk role Anda.' });
-    }
     const from = toText(req.query.from);
     const to = toText(req.query.to);
-    const data = await buildDashboard(from, to, { includeHpp: req.user.role === 'owner' });
+    const platform = toText(req.query.platform);
+    const storeName = toText(req.query.storeName);
+    const sku = toText(req.query.sku);
+    const data = await buildDashboard(from, to, { platform, storeName, sku });
     return res.json({ ok: true, data });
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Gagal memuat dashboard.' });
