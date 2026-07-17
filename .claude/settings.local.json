@@ -5,7 +5,11 @@
       "Bash(npx --version)",
       "Read(//private/tmp/**)",
       "Bash(timeout 90 npx --yes playwright@1.48 --version)",
-      "Bash(npx --yes playwright@1.48 --version)"
+      "Bash(npx --yes playwright@1.48 --version)",
+      "Bash(node -c app.js)",
+      "Bash(mysql -u root -e \"SELECT 1\")",
+      "Bash(brew services *)",
+      "Bash(node -c /Users/alenprastya/Documents/TIKTOK/PosTopi/app.js)"
     ]
   }
 }

@@ -18,7 +18,7 @@ const JWT_SECRET =  'topi';
 const DB_HOST = process.env.MYSQL_HOST || '127.0.0.1';
 const DB_PORT = Number(process.env.MYSQL_PORT || 3306);
 const DB_USER = process.env.MYSQL_USER || 'root';
-const DB_PASSWORD = process.env.MYSQL_PASSWORD || 'alen';
+const DB_PASSWORD = process.env.MYSQL_PASSWORD || 'dita';
 const DB_NAME = 'topi';
 
 app.use(cors());
@@ -1076,6 +1076,19 @@ async function buildProfitSummary(from, to, saleFilters = {}) {
     year: 'numeric',
   });
 
+  const marketingWhere = { ...expenseWhere };
+  if (saleFilters.channel || saleFilters.storeName) {
+    const matchingStores = await Store.findAll({
+      where: {
+        ...(saleFilters.channel ? { platform: saleFilters.channel } : {}),
+        ...(saleFilters.storeName ? { name: saleFilters.storeName } : {}),
+      },
+      raw: true,
+    });
+    const platformStoreValues = matchingStores.map((store) => store.platformStore).filter(Boolean);
+    marketingWhere.platformStore = { [Op.in]: platformStoreValues };
+  }
+
   const salesRows = await Sale.findAll({
     where: saleWhere,
     raw: true,
@@ -1087,7 +1100,7 @@ async function buildProfitSummary(from, to, saleFilters = {}) {
     order: [['expenseDate', 'ASC'], ['createdAt', 'ASC']],
   });
   const marketingRows = await MarketingExpense.findAll({
-    where: expenseWhere,
+    where: marketingWhere,
     raw: true,
     order: [['expenseDate', 'ASC'], ['createdAt', 'ASC']],
   });
@@ -1354,7 +1367,10 @@ function createSimpleCrudRoutes(prefix, model, serializer, parser, options = {})
   const writeMiddleware = options.writeMiddleware || ownerOnly;
   app.get(`/api/${prefix}`, ...authRequired, async (req, res) => {
     try {
-      const where = options.searchFields ? searchWhere(req.query.search, options.searchFields) : {};
+      const where = {
+        ...(options.searchFields ? searchWhere(req.query.search, options.searchFields) : {}),
+        ...(options.dateField ? dateWhere(options.dateField, toText(req.query.from), toText(req.query.to)) : {}),
+      };
       if (options.paginated) {
         const { page, limit, offset } = getPagination(req.query);
         const { count, rows } = await model.findAndCountAll({
@@ -1513,10 +1529,16 @@ async function parseMarketing(body) {
     throw new Error('Tanggal, kategori, dan platform & toko wajib diisi.');
   }
   const nominal = money(body.nominal);
-  const taxRate = body.taxRate === undefined || body.taxRate === null || body.taxRate === '' ? 0 : Number(body.taxRate);
-  const totalTax = body.totalTax === undefined || body.totalTax === null || body.totalTax === ''
-    ? Math.round(nominal * (Number.isFinite(taxRate) ? taxRate : 0))
-    : money(body.totalTax);
+  let taxRate = body.taxRate === undefined || body.taxRate === null || body.taxRate === '' ? 0 : Number(body.taxRate);
+  if (!Number.isFinite(taxRate)) taxRate = 0;
+  if (taxRate === 0) {
+    const store = await Store.findOne({ where: { platformStore } });
+    if (store) {
+      taxRate = store.taxRate || 0;
+    }
+  }
+  const totalTaxInput = body.totalTax === undefined || body.totalTax === null || body.totalTax === '' ? 0 : Number(body.totalTax);
+  const totalTax = totalTaxInput ? money(body.totalTax) : Math.round(nominal * taxRate);
   return {
     expenseDate,
     category,
@@ -1524,7 +1546,7 @@ async function parseMarketing(body) {
     platformStore,
     description: description || '-',
     nominal,
-    taxRate: Number.isFinite(taxRate) ? taxRate : 0,
+    taxRate,
     totalTax,
   };
 }
@@ -1540,7 +1562,7 @@ async function parseSale(body, existingRow) {
     throw new Error('Tanggal, channel, toko, dan SKU wajib diisi.');
   }
   const product = await Product.findOne({ where: { sku } });
-  const qty = Math.max(1, money(body.qty || 1));
+  const qty = Math.max(0, money(body.qty ?? 1));
   const price = money(body.price);
   const baseHpp = product ? product.hpp : money(body.hpp || 0);
   return {
@@ -1684,7 +1706,7 @@ async function createImportedSale(record, productHpp, summary, sheetStats, occur
   const subtotal = record.subtotal || qty * price;
   const adminFee = Math.abs(record.adminFee || 0);
 
-  if (!channel || !storeName || !saleDate || !sku || qty <= 0) {
+  if (!channel || !storeName || !saleDate || !sku) {
     return 'invalid';
   }
   if (!summary.firstSaleDate || saleDate < summary.firstSaleDate) {
@@ -2311,6 +2333,7 @@ async function fetchGroupedSales({ search, storeName, from, to, limit, offset })
        COUNT(*) AS itemCount,
        SUM(\`qty\`) AS totalQty,
        SUM(\`subtotal\`) AS totalSubtotal,
+       SUM(\`admin_fee\`) AS totalAdminFee,
        SUM(\`total_hpp\`) AS totalHpp
      FROM \`sales\`
      ${whereSql}
@@ -2333,6 +2356,7 @@ const serializeGroupedSale = (row, { includeHpp }) => ({
   itemCount: toInt(row.itemCount, 0),
   totalQty: toInt(row.totalQty, 0),
   totalSubtotal: toInt(row.totalSubtotal, 0),
+  totalAdminFee: toInt(row.totalAdminFee, 0),
   ...(includeHpp ? { totalHpp: toInt(row.totalHpp, 0) } : {}),
 });
 
@@ -2479,8 +2503,18 @@ app.post('/api/sales/bulk-delete', ...authRequired, salesRecapAccess, async (req
     return res.status(500).json({ ok: false, message: 'Gagal menghapus penjualan terpilih.' });
   }
 });
-createSimpleCrudRoutes('expenses/operasional', OperationalExpense, serializeOperational, parseOperational, { writeMiddleware: ownerOrLeader });
-createSimpleCrudRoutes('expenses/marketing', MarketingExpense, serializeMarketing, parseMarketing, { include: [Platform], reload: true, writeMiddleware: ownerLeaderAdmin });
+createSimpleCrudRoutes('expenses/operasional', OperationalExpense, serializeOperational, parseOperational, {
+  writeMiddleware: ownerOrLeader,
+  searchFields: ['category', 'description'],
+  dateField: 'expenseDate',
+});
+createSimpleCrudRoutes('expenses/marketing', MarketingExpense, serializeMarketing, parseMarketing, {
+  include: [Platform],
+  reload: true,
+  writeMiddleware: ownerLeaderAdmin,
+  searchFields: ['category', 'platformStore', 'description'],
+  dateField: 'expenseDate',
+});
 
 app.get('/api/expense-categories', ...authRequired, async (req, res) => {
   try {
