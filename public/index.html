@@ -73,6 +73,24 @@
     [data-theme="light"] .text-red-300,
     [data-theme="light"] .hover\:text-red-300:hover { color: #b91c1c; }
     [data-theme="light"] .text-violet-300 { color: #6d28d9; }
+    .sortable-header {
+      cursor: pointer;
+      user-select: none;
+      transition: color .15s ease, background-color .15s ease;
+    }
+    .sortable-header:hover,
+    .sortable-header:focus-visible {
+      background: rgba(6, 182, 212, .08);
+      color: #67e8f9;
+      outline: none;
+    }
+    .sort-indicator {
+      display: inline-block;
+      margin-left: .35rem;
+      color: #22d3ee;
+      font-size: .65rem;
+      line-height: 1;
+    }
   </style>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100">
@@ -348,16 +366,16 @@
                 <div class="grid gap-3 md:grid-cols-3 xl:grid-cols-[1fr_1fr_1fr_auto] xl:items-end">
                   <div>
                     <label class="mb-1 block text-xs text-slate-400">Platform</label>
-                    <select v-model="dashboardFilters.platform" @change="applyDashboardFilters" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400">
+                    <select v-model="dashboardFilters.platform" @change="onDashboardPlatformChange" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400">
                       <option value="">Semua Platform</option>
                       <option v-for="option in channelOptions" :key="'dash-platform-'+option.value" :value="option.value">{{ option.label }}</option>
                     </select>
                   </div>
                   <div>
                     <label class="mb-1 block text-xs text-slate-400">Toko</label>
-                    <select v-model="dashboardFilters.storeName" @change="applyDashboardFilters" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400">
+                    <select v-model="dashboardFilters.storeId" @change="onDashboardStoreChange" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400">
                       <option value="">Semua Toko</option>
-                      <option v-for="store in stores" :key="'dash-store-'+store.id" :value="store.name">{{ store.platformStore || store.name }}</option>
+                      <option v-for="store in dashboardStoreOptions" :key="'dash-store-'+store.id" :value="store.id">{{ store.platformStore || store.name }}</option>
                     </select>
                   </div>
                   <div>
@@ -434,7 +452,7 @@
               <div class="rounded-lg border border-slate-800 bg-slate-900 p-5 shadow-lg shadow-black/10">
                 <h4 class="mb-4 text-sm font-semibold uppercase tracking-[0.15em] text-slate-300">Kontribusi Platform</h4>
                 <div class="overflow-x-auto">
-                  <table class="min-w-full text-left text-sm">
+                  <table v-sortable-table class="min-w-full text-left text-sm">
                     <thead class="border-b border-slate-800 text-slate-400">
                       <tr>
                         <th class="px-4 py-3">Platform & Toko</th>
@@ -461,7 +479,7 @@
               <div class="rounded-lg border border-slate-800 bg-slate-900 p-5 shadow-lg shadow-black/10">
                 <h4 class="mb-4 text-sm font-semibold uppercase tracking-[0.15em] text-slate-300">Kinerja Top Produk</h4>
                 <div class="overflow-x-auto">
-                  <table class="min-w-full text-left text-sm">
+                  <table v-sortable-table class="min-w-full text-left text-sm">
                     <thead class="border-b border-slate-800 text-slate-400">
                       <tr>
                         <th class="px-4 py-3">Rank</th>
@@ -575,7 +593,7 @@
                 </div>
               </div>
               <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900">
-                <table class="min-w-full text-left text-sm">
+                <table v-sortable-table class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
                       <th v-if="isOwner" class="px-4 py-3">
@@ -842,7 +860,7 @@
                 <div v-if="!attendanceRows.length" class="rounded-lg border border-slate-800 bg-slate-900 px-4 py-8 text-center text-sm text-slate-500">Belum ada data absensi.</div>
               </div>
               <div class="hidden overflow-x-auto rounded-lg border border-slate-800 bg-slate-900 md:block">
-                <table class="min-w-full text-left text-sm">
+                <table v-sortable-table class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
                       <th v-if="isOwner || isLeader" class="px-4 py-3">
@@ -934,7 +952,7 @@
                 </div>
               </div>
               <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900">
-                <table class="min-w-full text-left text-sm">
+                <table v-sortable-table class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
                       <th class="px-4 py-3">
@@ -1013,16 +1031,16 @@
                 </div>
               </div>
               <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900">
-                <table class="min-w-full text-left text-sm">
+                <table v-sortable-table="{ server: true }" class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
                       <th class="px-4 py-3">
                         <input type="checkbox" :checked="isAllRowsSelected('barang', products)" @change="toggleSelectAllRows('barang', products)" class="rounded border-slate-600 bg-slate-950" />
                       </th>
-                      <th class="px-4 py-3">SKU</th>
-                      <th class="px-4 py-3">Nama Barang</th>
-                      <th class="px-4 py-3">Jenis</th>
-                      <th class="px-4 py-3 text-right">HPP</th>
+                      <th @click="toggleServerSort(productFilters, 'sku', fetchProducts)" class="sortable-header px-4 py-3">SKU {{ serverSortIndicator(productFilters, 'sku') }}</th>
+                      <th @click="toggleServerSort(productFilters, 'name', fetchProducts)" class="sortable-header px-4 py-3">Nama Barang {{ serverSortIndicator(productFilters, 'name') }}</th>
+                      <th @click="toggleServerSort(productFilters, 'variant', fetchProducts)" class="sortable-header px-4 py-3">Jenis {{ serverSortIndicator(productFilters, 'variant') }}</th>
+                      <th @click="toggleServerSort(productFilters, 'hpp', fetchProducts)" class="sortable-header px-4 py-3 text-right">HPP {{ serverSortIndicator(productFilters, 'hpp') }}</th>
                       <th class="px-4 py-3 text-right">Aksi</th>
                     </tr>
                   </thead>
@@ -1094,9 +1112,9 @@
                   </div>
                   <div>
                     <label class="mb-1 block text-xs text-slate-400">Toko</label>
-                    <select v-model="saleFilters.storeName" @change="applySaleFilters" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400">
+                    <select v-model="saleFilters.storeId" @change="applySaleFilters" class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400">
                       <option value="">Semua toko</option>
-                      <option v-for="store in stores" :key="'sale-store-'+store.id" :value="store.name">{{ store.platformStore || store.name }}</option>
+                      <option v-for="store in stores" :key="'sale-store-'+store.id" :value="store.id">{{ store.platformStore || store.name }}</option>
                     </select>
                   </div>
                   <div>
@@ -1118,23 +1136,23 @@
                 </div>
               </div>
               <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900">
-                <table class="min-w-full text-left text-sm">
+                <table v-sortable-table="{ server: true }" class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
                       <th v-if="isBackOffice" class="px-4 py-3">
                         <input type="checkbox" :checked="isAllRowsSelected('penjualan', sales)" @change="toggleSelectAllRows('penjualan', sales)" class="rounded border-slate-600 bg-slate-950" />
                       </th>
-                      <th class="px-4 py-3">Tanggal</th>
-                      <th class="px-4 py-3">Channel</th>
-                      <th class="px-4 py-3">Toko</th>
-                      <th class="px-4 py-3">No Pesanan</th>
-                      <th class="px-4 py-3">Pelanggan</th>
-                      <th class="px-4 py-3 text-right">Item</th>
-                      <th class="px-4 py-3 text-right">Qty</th>
-                      <th class="px-4 py-3 text-right">Sub Total</th>
-                      <th class="px-4 py-3 text-right">Biaya Admin</th>
-                      <th v-if="isOwner" class="px-4 py-3 text-right">HPP</th>
-                      <th v-if="isOwner" class="px-4 py-3 text-right">Laba</th>
+                      <th @click="toggleServerSort(saleFilters, 'saleDate', fetchSales)" class="sortable-header px-4 py-3">Tanggal {{ serverSortIndicator(saleFilters, 'saleDate') }}</th>
+                      <th @click="toggleServerSort(saleFilters, 'channel', fetchSales)" class="sortable-header px-4 py-3">Channel {{ serverSortIndicator(saleFilters, 'channel') }}</th>
+                      <th @click="toggleServerSort(saleFilters, 'storeName', fetchSales)" class="sortable-header px-4 py-3">Toko {{ serverSortIndicator(saleFilters, 'storeName') }}</th>
+                      <th @click="toggleServerSort(saleFilters, 'orderNumber', fetchSales)" class="sortable-header px-4 py-3">No Pesanan {{ serverSortIndicator(saleFilters, 'orderNumber') }}</th>
+                      <th @click="toggleServerSort(saleFilters, 'customer', fetchSales)" class="sortable-header px-4 py-3">Pelanggan {{ serverSortIndicator(saleFilters, 'customer') }}</th>
+                      <th @click="toggleServerSort(saleFilters, 'itemCount', fetchSales)" class="sortable-header px-4 py-3 text-right">Item {{ serverSortIndicator(saleFilters, 'itemCount') }}</th>
+                      <th @click="toggleServerSort(saleFilters, 'totalQty', fetchSales)" class="sortable-header px-4 py-3 text-right">Qty {{ serverSortIndicator(saleFilters, 'totalQty') }}</th>
+                      <th @click="toggleServerSort(saleFilters, 'totalSubtotal', fetchSales)" class="sortable-header px-4 py-3 text-right">Sub Total {{ serverSortIndicator(saleFilters, 'totalSubtotal') }}</th>
+                      <th @click="toggleServerSort(saleFilters, 'totalAdminFee', fetchSales)" class="sortable-header px-4 py-3 text-right">Biaya Admin {{ serverSortIndicator(saleFilters, 'totalAdminFee') }}</th>
+                      <th v-if="isOwner" @click="toggleServerSort(saleFilters, 'totalHpp', fetchSales)" class="sortable-header px-4 py-3 text-right">HPP {{ serverSortIndicator(saleFilters, 'totalHpp') }}</th>
+                      <th v-if="isOwner" @click="toggleServerSort(saleFilters, 'profit', fetchSales)" class="sortable-header px-4 py-3 text-right">Laba {{ serverSortIndicator(saleFilters, 'profit') }}</th>
                       <th class="px-4 py-3 text-right">Detail</th>
                     </tr>
                   </thead>
@@ -1214,7 +1232,7 @@
                 </div>
               </div>
               <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900">
-                <table class="min-w-full text-left text-sm">
+                <table v-sortable-table class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
                       <th class="px-4 py-3">
@@ -1297,7 +1315,7 @@
                 </div>
               </div>
               <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900">
-                <table class="min-w-full text-left text-sm">
+                <table v-sortable-table class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
                       <th class="px-4 py-3">
@@ -1359,7 +1377,7 @@
               <template v-if="salaryReportOwner.length">
                 <h4 class="text-sm font-semibold uppercase tracking-[0.15em] text-slate-400">Laporan Gaji Owner</h4>
                 <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900">
-                  <table class="min-w-full text-left text-sm">
+                  <table v-sortable-table class="min-w-full text-left text-sm">
                     <thead class="border-b border-slate-800 text-slate-400">
                       <tr>
                         <th class="px-4 py-3">Nama</th>
@@ -1419,7 +1437,7 @@
 
               <h4 class="text-sm font-semibold uppercase tracking-[0.15em] text-slate-400">Laporan Gaji Karyawan</h4>
               <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900">
-                <table class="min-w-full text-left text-sm">
+                <table v-sortable-table class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
                       <th class="px-4 py-3">Nama</th>
@@ -1611,7 +1629,7 @@
                     <span class="text-xs text-slate-500">{{ formatAccountingMoney(profitReport?.totals?.revenue || 0) }}</span>
                   </div>
                   <div class="overflow-x-auto">
-                    <table class="min-w-full text-left text-sm">
+                    <table v-sortable-table class="min-w-full text-left text-sm">
                       <thead class="border-b border-slate-800 text-slate-400">
                         <tr>
                           <th class="px-5 py-3">Keterangan</th>
@@ -1647,7 +1665,7 @@
                     <span class="text-xs text-slate-500">{{ formatAccountingMoney(profitReport?.totals?.operational || 0) }}</span>
                   </div>
                   <div class="overflow-x-auto">
-                    <table class="min-w-full text-left text-sm">
+                    <table v-sortable-table class="min-w-full text-left text-sm">
                       <thead class="border-b border-slate-800 text-slate-400">
                         <tr>
                           <th class="px-5 py-3">Keterangan</th>
@@ -1677,7 +1695,7 @@
                     <span class="text-xs text-slate-500">{{ formatAccountingMoney(profitReport?.totals?.marketing || 0) }}</span>
                   </div>
                   <div class="overflow-x-auto">
-                    <table class="min-w-full text-left text-sm">
+                    <table v-sortable-table class="min-w-full text-left text-sm">
                       <thead class="border-b border-slate-800 text-slate-400">
                         <tr>
                           <th class="px-5 py-3">Keterangan</th>
@@ -1715,7 +1733,7 @@
                     <span class="text-xs text-slate-500">{{ formatAccountingMoney(profitReport?.totals?.adminFee || 0) }}</span>
                   </div>
                   <div class="overflow-x-auto">
-                    <table class="min-w-full text-left text-sm">
+                    <table v-sortable-table class="min-w-full text-left text-sm">
                       <thead class="border-b border-slate-800 text-slate-400">
                         <tr>
                           <th class="px-5 py-3">Keterangan</th>
@@ -1747,7 +1765,13 @@
                   <div class="grid gap-0 border-b border-slate-800 md:grid-cols-2">
                     <div class="border-b border-slate-800 md:border-b-0 md:border-r md:border-slate-800">
                       <div class="border-b border-slate-800 px-5 py-3 text-sm font-semibold text-slate-100">Pendapatan Non Operasional</div>
-                      <table class="min-w-full text-left text-sm">
+                      <table v-sortable-table class="min-w-full text-left text-sm">
+                        <thead class="border-b border-slate-800 text-xs text-slate-500">
+                          <tr>
+                            <th class="px-5 py-2">Keterangan</th>
+                            <th class="px-5 py-2 text-right">Nominal</th>
+                          </tr>
+                        </thead>
                         <tbody>
                           <tr v-for="row in profitReport?.sections?.nonOperationalIncome || []" :key="'noi-'+row.label" class="border-b border-slate-800 last:border-0">
                             <td class="px-5 py-3 text-slate-300">{{ row.label }}</td>
@@ -1762,7 +1786,13 @@
                     </div>
                     <div>
                       <div class="border-b border-slate-800 px-5 py-3 text-sm font-semibold text-slate-100">Beban Non Operasional</div>
-                      <table class="min-w-full text-left text-sm">
+                      <table v-sortable-table class="min-w-full text-left text-sm">
+                        <thead class="border-b border-slate-800 text-xs text-slate-500">
+                          <tr>
+                            <th class="px-5 py-2">Keterangan</th>
+                            <th class="px-5 py-2 text-right">Nominal</th>
+                          </tr>
+                        </thead>
                         <tbody>
                           <tr v-for="row in profitReport?.sections?.nonOperationalExpense || []" :key="'noe-'+row.label" class="border-b border-slate-800 last:border-0">
                             <td class="px-5 py-3 text-slate-300">{{ row.label }}</td>
@@ -1928,7 +1958,7 @@
                   <button @click="openModal('shift')" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">Tambah Shift</button>
                 </div>
                 <div class="mt-4 overflow-x-auto rounded-lg border border-slate-800">
-                  <table class="min-w-full text-left text-sm">
+                  <table v-sortable-table class="min-w-full text-left text-sm">
                     <thead class="border-b border-slate-800 text-slate-400">
                       <tr>
                         <th class="px-4 py-3">Nama Shift</th>
@@ -1972,7 +2002,7 @@
                   <button @click="addHoliday" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">Tambah Hari Libur</button>
                 </div>
                 <div class="mt-4 overflow-x-auto rounded-lg border border-slate-800">
-                  <table class="min-w-full text-left text-sm">
+                  <table v-sortable-table class="min-w-full text-left text-sm">
                     <thead class="border-b border-slate-800 text-slate-400">
                       <tr>
                         <th class="px-4 py-3">Tanggal</th>
@@ -2185,7 +2215,7 @@
         <div class="p-5">
           <div v-if="saleDetailModal.loading" class="py-8 text-center text-sm text-slate-400">Memuat detail...</div>
           <div v-else class="overflow-x-auto rounded-lg border border-slate-800">
-            <table class="min-w-full text-left text-sm">
+            <table v-sortable-table class="min-w-full text-left text-sm">
               <thead class="border-b border-slate-800 text-slate-400">
                 <tr>
                   <th class="px-4 py-3">SKU</th>
@@ -2259,7 +2289,118 @@
       maximumFractionDigits: 0,
     });
 
-    createApp({
+    const sortableTableStates = new WeakMap();
+    const sortableCollator = new Intl.Collator('id-ID', { numeric: true, sensitivity: 'base' });
+    const sortableMonths = {
+      jan: 0, feb: 1, mar: 2, apr: 3, mei: 4, jun: 5,
+      jul: 6, agu: 7, sep: 8, okt: 9, nov: 10, des: 11,
+    };
+
+    function sortableCellValue(cell) {
+      const text = String(cell?.dataset?.sortValue || cell?.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!text || text === '-') return { empty: true, value: '' };
+
+      const dateMatch = text.toLowerCase().match(/^(\d{1,2})\s+(jan|feb|mar|apr|mei|jun|jul|agu|sep|okt|nov|des)\s+(\d{4})/);
+      if (dateMatch) {
+        return {
+          empty: false,
+          value: new Date(Number(dateMatch[3]), sortableMonths[dateMatch[2]], Number(dateMatch[1])).getTime(),
+        };
+      }
+
+      const compact = text.replace(/\s/g, '');
+      if (/^-?(?:rp)?[\d.,]+%?$/i.test(compact)) {
+        const negative = compact.startsWith('-');
+        const numeric = Number(compact.replace(/[^\d]/g, '')) || 0;
+        return { empty: false, value: negative ? -numeric : numeric };
+      }
+
+      return { empty: false, value: text.toLocaleLowerCase('id-ID') };
+    }
+
+    function compareSortableValues(left, right, direction) {
+      if (left.empty && right.empty) return 0;
+      if (left.empty) return 1;
+      if (right.empty) return -1;
+      const compared = typeof left.value === 'number' && typeof right.value === 'number'
+        ? left.value - right.value
+        : sortableCollator.compare(String(left.value), String(right.value));
+      return direction === 'asc' ? compared : -compared;
+    }
+
+    function renderSortIndicator(table, columnIndex, direction) {
+      table.querySelectorAll('thead th').forEach((header, index) => {
+        header.querySelector('.sort-indicator')?.remove();
+        header.setAttribute('aria-sort', index === columnIndex
+          ? (direction === 'asc' ? 'ascending' : 'descending')
+          : 'none');
+      });
+      const header = table.querySelectorAll('thead th')[columnIndex];
+      if (!header) return;
+      const indicator = document.createElement('span');
+      indicator.className = 'sort-indicator';
+      indicator.textContent = direction === 'asc' ? '▲' : '▼';
+      indicator.setAttribute('aria-hidden', 'true');
+      header.appendChild(indicator);
+    }
+
+    function applyTableSort(table, columnIndex, direction) {
+      const body = table.tBodies?.[0];
+      if (!body) return;
+      const allRows = Array.from(body.rows);
+      const sortableRows = allRows.filter((row) => !row.querySelector('[colspan]') && !String(row.className).includes('bg-'));
+      if (sortableRows.length < 2) {
+        renderSortIndicator(table, columnIndex, direction);
+        return;
+      }
+      const fixedRows = allRows.filter((row) => !sortableRows.includes(row));
+      const indexedRows = sortableRows.map((row, index) => ({ row, index }));
+      indexedRows.sort((left, right) => {
+        const compared = compareSortableValues(
+          sortableCellValue(left.row.cells[columnIndex]),
+          sortableCellValue(right.row.cells[columnIndex]),
+          direction,
+        );
+        return compared || left.index - right.index;
+      });
+      const firstFixedRow = fixedRows[0] || null;
+      indexedRows.forEach(({ row }) => body.insertBefore(row, firstFixedRow));
+      renderSortIndicator(table, columnIndex, direction);
+    }
+
+    function bindSortableTable(table) {
+      if (!sortableTableStates.has(table)) {
+        sortableTableStates.set(table, { columnIndex: null, direction: 'asc' });
+      }
+      const state = sortableTableStates.get(table);
+      table.querySelectorAll('thead th').forEach((header, columnIndex) => {
+        const label = String(header.textContent || '').trim().toLocaleLowerCase('id-ID');
+        if (!label || header.querySelector('input') || ['aksi', 'detail'].includes(label) || header.dataset.sortableReady) return;
+        header.dataset.sortableReady = 'true';
+        header.classList.add('sortable-header');
+        header.tabIndex = 0;
+        header.setAttribute('role', 'button');
+        header.setAttribute('aria-sort', 'none');
+        header.title = 'Klik untuk urutkan naik/turun';
+        const toggle = () => {
+          state.direction = state.columnIndex === columnIndex && state.direction === 'asc' ? 'desc' : 'asc';
+          state.columnIndex = columnIndex;
+          applyTableSort(table, state.columnIndex, state.direction);
+        };
+        header.addEventListener('click', toggle);
+        header.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            toggle();
+          }
+        });
+      });
+      if (state.columnIndex !== null) {
+        applyTableSort(table, state.columnIndex, state.direction);
+      }
+    }
+
+    const appInstance = createApp({
       data() {
         return {
           loading: true,
@@ -2314,7 +2455,7 @@
           },
           dashboardFilters: {
             platform: '',
-            storeName: '',
+            storeId: '',
             sku: '',
           },
           dashboardProductOptions: [],
@@ -2325,6 +2466,8 @@
             search: '',
             page: 1,
             limit: 10,
+            sortBy: 'createdAt',
+            sortDir: 'desc',
           },
           productPagination: {
             page: 1,
@@ -2334,11 +2477,13 @@
           },
           saleFilters: {
             search: '',
-            storeName: '',
+            storeId: '',
             from: '',
             to: '',
             page: 1,
             limit: 10,
+            sortBy: 'saleDate',
+            sortDir: 'desc',
           },
           salePagination: {
             page: 1,
@@ -2586,6 +2731,10 @@
           }
           return options;
         },
+        dashboardStoreOptions() {
+          if (!this.dashboardFilters.platform) return this.stores;
+          return this.stores.filter((store) => store.platform === this.dashboardFilters.platform);
+        },
         dashboardModeOptions() {
           return [
             { value: 'all', label: 'Data semua' },
@@ -2736,9 +2885,9 @@
           this.productImportSummary = null;
           this.marketingImportBusy = false;
           this.marketingImportSummary = null;
-          this.productFilters = { search: '', page: 1, limit: 10 };
+          this.productFilters = { search: '', page: 1, limit: 10, sortBy: 'createdAt', sortDir: 'desc' };
           this.productPagination = { page: 1, limit: 10, total: 0, totalPages: 1 };
-          this.saleFilters = { search: '', storeName: '', from: '', to: '', page: 1, limit: 10 };
+          this.saleFilters = { search: '', storeId: '', from: '', to: '', page: 1, limit: 10, sortBy: 'saleDate', sortDir: 'desc' };
           this.salePagination = { page: 1, limit: 10, total: 0, totalPages: 1 };
           this.operationalExpenses = [];
           this.marketingExpenses = [];
@@ -3216,7 +3365,7 @@
           await this.fetchProducts();
         },
         async resetProductFilters() {
-          this.productFilters = { search: '', page: 1, limit: 10 };
+          this.productFilters = { search: '', page: 1, limit: 10, sortBy: 'createdAt', sortDir: 'desc' };
           await this.fetchProducts();
         },
         async changeProductPage(page) {
@@ -3229,8 +3378,32 @@
           this.saleFilters.page = 1;
           await this.fetchSales();
         },
+        serverSortIndicator(filters, field) {
+          if (filters.sortBy !== field) return '';
+          return filters.sortDir === 'asc' ? '▲' : '▼';
+        },
+        async toggleServerSort(filters, field, fetcher) {
+          filters.sortDir = filters.sortBy === field && filters.sortDir === 'asc' ? 'desc' : 'asc';
+          filters.sortBy = field;
+          filters.page = 1;
+          await fetcher();
+        },
+        async onDashboardPlatformChange() {
+          const selectedStore = this.stores.find((store) => String(store.id) === String(this.dashboardFilters.storeId));
+          if (selectedStore && selectedStore.platform !== this.dashboardFilters.platform) {
+            this.dashboardFilters.storeId = '';
+          }
+          await this.applyDashboardFilters();
+        },
+        async onDashboardStoreChange() {
+          const selectedStore = this.stores.find((store) => String(store.id) === String(this.dashboardFilters.storeId));
+          if (selectedStore) {
+            this.dashboardFilters.platform = selectedStore.platform;
+          }
+          await this.applyDashboardFilters();
+        },
         async resetSaleFilters() {
-          this.saleFilters = { search: '', storeName: '', from: '', to: '', page: 1, limit: 10 };
+          this.saleFilters = { search: '', storeId: '', from: '', to: '', page: 1, limit: 10, sortBy: 'saleDate', sortDir: 'desc' };
           await this.fetchSales();
         },
         async changeSalePage(page) {
@@ -4619,7 +4792,20 @@
           }
         },
       },
-    }).mount('#app');
+    });
+
+    appInstance.directive('sortable-table', {
+      mounted(table, binding) {
+        if (binding.value?.server) return;
+        bindSortableTable(table);
+      },
+      updated(table, binding) {
+        if (binding.value?.server) return;
+        bindSortableTable(table);
+      },
+    });
+
+    appInstance.mount('#app');
   </script>
 </body>
 </html>

@@ -1373,10 +1373,13 @@ function createSimpleCrudRoutes(prefix, model, serializer, parser, options = {})
       };
       if (options.paginated) {
         const { page, limit, offset } = getPagination(req.query);
+        const requestedSort = toText(req.query.sortBy);
+        const sortBy = (options.sortFields || []).includes(requestedSort) ? requestedSort : 'createdAt';
+        const sortDir = toText(req.query.sortDir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
         const { count, rows } = await model.findAndCountAll({
           where,
           include: options.include || [],
-          order: [['createdAt', 'DESC']],
+          order: [[sortBy, sortDir], ['id', 'DESC']],
           limit,
           offset,
         });
@@ -1620,7 +1623,10 @@ const excelDate = (value) => {
   }
   const parsed = new Date(text);
   if (!Number.isNaN(parsed.getTime())) {
-    return parsed.toISOString().slice(0, 10);
+    // Keep the calendar date as entered in Excel. Converting a local midnight
+    // value to ISO/UTC shifts Indonesian dates back one day (for example,
+    // "1 Februari 2026" became "2026-01-31").
+    return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
   }
   return '';
 };
@@ -2251,6 +2257,7 @@ createSimpleCrudRoutes('stores', Store, serializeStore, parseStore, {
 createSimpleCrudRoutes('products', Product, serializeProduct, parseProduct, {
   paginated: true,
   searchFields: ['sku', 'name', 'variant'],
+  sortFields: ['sku', 'name', 'variant', 'hpp', 'createdAt'],
 });
 app.get('/api/products/template', ...authRequired, ownerOnly, async (req, res) => {
   try {
@@ -2295,7 +2302,7 @@ app.get('/api/sales/template', ...authRequired, salesRecapAccess, async (req, re
 });
 
 
-async function fetchGroupedSales({ search, storeName, from, to, limit, offset }) {
+async function fetchGroupedSales({ search, channel, storeName, from, to, sortBy, sortDir, limit, offset }) {
   const conditions = [];
   const replacements = {};
   if (search) {
@@ -2306,6 +2313,10 @@ async function fetchGroupedSales({ search, storeName, from, to, limit, offset })
     conditions.push('`store_name` = :storeName');
     replacements.storeName = storeName;
   }
+  if (channel) {
+    conditions.push('`channel` = :channel');
+    replacements.channel = channel;
+  }
   if (from) {
     conditions.push('`sale_date` >= :from');
     replacements.from = from;
@@ -2315,6 +2326,21 @@ async function fetchGroupedSales({ search, storeName, from, to, limit, offset })
     replacements.to = to;
   }
   const whereSql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const sortColumns = {
+    saleDate: 'saleDate',
+    channel: 'channel',
+    storeName: 'storeName',
+    orderNumber: 'orderNumber',
+    customer: 'customer',
+    itemCount: 'itemCount',
+    totalQty: 'totalQty',
+    totalSubtotal: 'totalSubtotal',
+    totalAdminFee: 'totalAdminFee',
+    totalHpp: 'totalHpp',
+    profit: 'profit',
+  };
+  const orderColumn = sortColumns[sortBy] || sortColumns.saleDate;
+  const orderDirection = String(sortDir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
   const countRows = await sequelize.query(
     `SELECT COUNT(*) AS total FROM (SELECT 1 FROM \`sales\` ${whereSql} GROUP BY ${SALE_GROUP_KEY_SQL}) t`,
@@ -2334,11 +2360,12 @@ async function fetchGroupedSales({ search, storeName, from, to, limit, offset })
        SUM(\`qty\`) AS totalQty,
        SUM(\`subtotal\`) AS totalSubtotal,
        SUM(\`admin_fee\`) AS totalAdminFee,
-       SUM(\`total_hpp\`) AS totalHpp
+       SUM(\`total_hpp\`) AS totalHpp,
+       SUM(\`subtotal\`) - SUM(\`admin_fee\`) - SUM(\`total_hpp\`) AS profit
      FROM \`sales\`
      ${whereSql}
      GROUP BY ${SALE_GROUP_KEY_SQL}
-     ORDER BY saleDate DESC, id DESC
+     ORDER BY ${orderColumn} ${orderDirection}, id DESC
      LIMIT :limit OFFSET :offset`,
     { replacements: { ...replacements, limit, offset }, type: sequelize.QueryTypes.SELECT },
   );
@@ -2365,12 +2392,20 @@ app.get('/api/sales', ...authRequired, salesRecapAccess, async (req, res) => {
     const includeHpp = req.user.role === 'owner';
     const { page, limit, offset } = getPagination(req.query);
     const searchText = toText(req.query.search);
-    const storeName = toText(req.query.storeName);
+    const storeId = toInt(req.query.storeId, null);
+    const selectedStore = storeId ? await Store.findByPk(storeId) : null;
+    if (storeId && !selectedStore) {
+      return res.status(400).json({ ok: false, message: 'Toko yang dipilih tidak ditemukan.' });
+    }
+    const storeName = selectedStore ? selectedStore.name : toText(req.query.storeName);
+    const channel = selectedStore ? selectedStore.platform : toText(req.query.channel);
     const from = toText(req.query.from);
     const to = toText(req.query.to);
+    const sortBy = toText(req.query.sortBy);
+    const sortDir = toText(req.query.sortDir);
 
     if (toText(req.query.grouped) === 'true') {
-      const { rows, total } = await fetchGroupedSales({ search: searchText, storeName, from, to, limit, offset });
+      const { rows, total } = await fetchGroupedSales({ search: searchText, channel, storeName, from, to, sortBy, sortDir, limit, offset });
       return res.json({
         ok: true,
         data: rows.map((row) => serializeGroupedSale(row, { includeHpp })),
@@ -2382,16 +2417,22 @@ app.get('/api/sales', ...authRequired, salesRecapAccess, async (req, res) => {
     if (storeName) {
       where.storeName = storeName;
     }
+    if (channel) {
+      where.channel = channel;
+    }
     if (from || to) {
       where.saleDate = {};
       if (from) where.saleDate[Op.gte] = from;
       if (to) where.saleDate[Op.lte] = to;
     }
 
+    const saleSortFields = ['saleDate', 'channel', 'storeName', 'orderNumber', 'customer', 'qty', 'subtotal', 'adminFee', 'totalHpp'];
+    const saleSortBy = saleSortFields.includes(sortBy) ? sortBy : 'saleDate';
+    const saleSortDir = sortDir.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
     const { count, rows } = await Sale.findAndCountAll({
       where,
       include: [Platform],
-      order: [['saleDate', 'DESC'], ['createdAt', 'DESC']],
+      order: [[saleSortBy, saleSortDir], ['createdAt', 'DESC']],
       limit,
       offset,
     });
@@ -3406,8 +3447,13 @@ app.get('/api/dashboard', ...authRequired, async (req, res) => {
   try {
     const from = toText(req.query.from);
     const to = toText(req.query.to);
-    const platform = toText(req.query.platform);
-    const storeName = toText(req.query.storeName);
+    const storeId = toInt(req.query.storeId, null);
+    const selectedStore = storeId ? await Store.findByPk(storeId) : null;
+    if (storeId && !selectedStore) {
+      return res.status(400).json({ ok: false, message: 'Toko yang dipilih tidak ditemukan.' });
+    }
+    const platform = selectedStore ? selectedStore.platform : toText(req.query.platform);
+    const storeName = selectedStore ? selectedStore.name : toText(req.query.storeName);
     const sku = toText(req.query.sku);
     const data = await buildDashboard(from, to, { platform, storeName, sku });
     return res.json({ ok: true, data });
