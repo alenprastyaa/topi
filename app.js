@@ -18,7 +18,7 @@ const JWT_SECRET =  'topi';
 const DB_HOST = process.env.MYSQL_HOST || '127.0.0.1';
 const DB_PORT = Number(process.env.MYSQL_PORT || 3306);
 const DB_USER = process.env.MYSQL_USER || 'root';
-const DB_PASSWORD = process.env.MYSQL_PASSWORD || 'alen';
+const DB_PASSWORD = process.env.MYSQL_PASSWORD || 'dita';
 const DB_NAME = 'topi';
 
 app.use(cors());

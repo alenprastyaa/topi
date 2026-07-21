@@ -9,7 +9,11 @@
       "Bash(node -c app.js)",
       "Bash(mysql -u root -e \"SELECT 1\")",
       "Bash(brew services *)",
-      "Bash(node -c /Users/alenprastya/Documents/TIKTOK/PosTopi/app.js)"
+      "Bash(node -c /Users/alenprastya/Documents/TIKTOK/PosTopi/app.js)",
+      "Bash(mysql *)",
+      "Bash(node *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/)",
+      "Bash(curl *)"
     ]
   }
 }
