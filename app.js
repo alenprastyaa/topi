@@ -178,6 +178,16 @@ const sequelize = new Sequelize(DB_NAME, DB_USER, DB_PASSWORD, {
   dialect: 'mysql',
   logging: false,
   timezone: '+07:00',
+  dialectOptions: {
+    // Raw sequelize.query() calls (used for sales/dashboard aggregation) bypass
+    // Sequelize's own DATEONLY parsing and get the mysql2 driver's value directly.
+    // mysql2 hands back DATE columns as JS Date objects at local midnight; once
+    // Express JSON-serializes that Date it calls toISOString(), which converts to
+    // UTC and shifts the calendar date back a day for any timezone ahead of UTC
+    // (e.g. WIB). Keeping DATE columns as plain 'YYYY-MM-DD' strings avoids that
+    // round trip entirely. DATETIME/TIMESTAMP columns are left untouched.
+    dateStrings: ['DATE'],
+  },
   define: {
     underscored: true,
     timestamps: true,
