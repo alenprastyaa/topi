@@ -18,7 +18,7 @@ const JWT_SECRET =  'topi';
 const DB_HOST = process.env.MYSQL_HOST || '127.0.0.1';
 const DB_PORT = Number(process.env.MYSQL_PORT || 3306);
 const DB_USER = process.env.MYSQL_USER || 'root';
-const DB_PASSWORD = process.env.MYSQL_PASSWORD || 'alen';
+const DB_PASSWORD = process.env.MYSQL_PASSWORD || 'dita';
 const DB_NAME = 'topi';
 
 app.use(cors());
@@ -1774,7 +1774,7 @@ async function createImportedSale(record, productHpp, summary, sheetStats, occur
 }
 
 async function importSalesWorkbook(buffer, fileName = '') {
-  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true, dateNF: 'yyyy-mm-dd' });
+  const workbook = XLSX.read(buffer, { type: 'buffer' });
   const summary = {
     productsCreated: 0,
     productsUpdated: 0,
@@ -2036,7 +2036,7 @@ function buildFailedRowsWorkbook(sheetGroups) {
 }
 
 async function importProductsWorkbook(buffer) {
-  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true, dateNF: 'yyyy-mm-dd' });
+  const workbook = XLSX.read(buffer, { type: 'buffer' });
   const sheetName = workbook.SheetNames.find((name) => normalizeHeader(name) === normalizeHeader('Data Barang')) || workbook.SheetNames[0];
   if (!sheetName) {
     throw new Error('Sheet Data Barang tidak ditemukan.');
@@ -2123,7 +2123,7 @@ function buildMarketingTemplateBuffer() {
 }
 
 async function importMarketingWorkbook(buffer) {
-  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true, dateNF: 'yyyy-mm-dd' });
+  const workbook = XLSX.read(buffer, { type: 'buffer' });
   let sheetName = null;
   let rows = null;
   let headerRowIndex = -1;
