@@ -902,7 +902,7 @@ const ownerOnly = (req, res, next) => {
 
 const ownerOrLeader = (req, res, next) => {
   if (!['owner', 'leader'].includes(req.user?.role)) {
-    return res.status(403).json({ ok: false, message: 'Akses ini hanya untuk owner atau leader.' });
+    return res.status(403).json({ ok: false, message: 'Akses ini hanya untuk owner atau kepala toko.' });
   }
   return next();
 };
@@ -922,8 +922,8 @@ const ownerLeaderAdmin = (req, res, next) => {
 };
 
 const selfServiceRole = (req, res, next) => {
-  if (!['karyawan', 'admin'].includes(req.user?.role)) {
-    return res.status(403).json({ ok: false, message: 'Fitur ini hanya untuk karyawan atau admin.' });
+  if (!['leader', 'karyawan', 'admin'].includes(req.user?.role)) {
+    return res.status(403).json({ ok: false, message: 'Fitur ini hanya untuk kepala toko, karyawan, atau admin.' });
   }
   return next();
 };
@@ -2793,8 +2793,8 @@ app.post('/api/users/bulk-delete', ...authRequired, ownerOnly, async (req, res) 
 });
 
 app.get('/api/face/me', ...authRequired, async (req, res) => {
-  if (!['karyawan', 'admin'].includes(req.user.role)) {
-    return res.status(403).json({ ok: false, message: 'Daftar wajah hanya tersedia untuk karyawan atau admin.' });
+  if (!['leader', 'karyawan', 'admin'].includes(req.user.role)) {
+    return res.status(403).json({ ok: false, message: 'Daftar wajah hanya tersedia untuk kepala toko, karyawan, atau admin.' });
   }
   return res.json({
     ok: true,
@@ -2811,8 +2811,8 @@ app.get('/api/face/me', ...authRequired, async (req, res) => {
 
 app.post('/api/face/register', ...authRequired, async (req, res) => {
   try {
-    if (!['karyawan', 'admin'].includes(req.user.role)) {
-      return res.status(403).json({ ok: false, message: 'Daftar wajah hanya untuk karyawan atau admin.' });
+    if (!['leader', 'karyawan', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ ok: false, message: 'Daftar wajah hanya untuk kepala toko, karyawan, atau admin.' });
     }
     const descriptor = req.body.descriptor;
     const faceImageUrl = toText(req.body.faceImageUrl);
@@ -3075,8 +3075,8 @@ app.post('/api/attendance/bulk-delete', ...authRequired, ownerOrLeader, async (r
 
 app.post('/api/attendance/check-in', ...authRequired, async (req, res) => {
   try {
-    if (!['karyawan', 'admin'].includes(req.user.role)) {
-      return res.status(403).json({ ok: false, message: 'Absensi wajah hanya untuk karyawan atau admin.' });
+    if (!['leader', 'karyawan', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ ok: false, message: 'Absensi wajah hanya untuk kepala toko, karyawan, atau admin.' });
     }
     const photoUrl = toText(req.body.photoUrl);
     if (!photoUrl) {
@@ -3233,7 +3233,7 @@ app.post('/api/reports/salary/adjust', ...authRequired, ownerOrLeader, async (re
       return res.status(404).json({ ok: false, message: 'Karyawan tidak ditemukan.' });
     }
     if (target.role === 'owner' && req.user.role !== 'owner') {
-      return res.status(403).json({ ok: false, message: 'Gaji owner tidak bisa diubah oleh leader.' });
+      return res.status(403).json({ ok: false, message: 'Gaji owner tidak bisa diubah oleh kepala toko.' });
     }
     const weekStart = sundayOfWeek(toText(req.body.weekStart) || jakartaDate());
     let payment = await SalaryPayment.findOne({ where: { userId, weekStart } });
@@ -3261,7 +3261,7 @@ app.post('/api/reports/salary/mark-paid', ...authRequired, ownerOrLeader, async 
       return res.status(404).json({ ok: false, message: 'Karyawan tidak ditemukan.' });
     }
     if (target.role === 'owner' && req.user.role !== 'owner') {
-      return res.status(403).json({ ok: false, message: 'Gaji owner tidak bisa diubah oleh leader.' });
+      return res.status(403).json({ ok: false, message: 'Gaji owner tidak bisa diubah oleh kepala toko.' });
     }
     const weekStart = sundayOfWeek(toText(req.body.weekStart) || jakartaDate());
     const paid = Boolean(req.body.paid);

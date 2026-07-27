@@ -703,34 +703,34 @@
                       <img :src="faceProfile.faceImageUrl" alt="Foto wajah tersimpan" class="h-44 w-full object-cover" />
                     </a>
                   </div>
-                  <button v-if="faceProfile?.registered" @click="activeTab = 'absensi'" class="w-full rounded-md bg-cyan-500 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">
+                  <button v-if="faceProfile?.registered" @click="activeTab = selfAttendanceTab" class="w-full rounded-md bg-cyan-500 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">
                     Ke Halaman Absensi
                   </button>
                 </div>
               </div>
             </section>
 
-            <section v-if="activeTab === 'absensi'" class="space-y-4">
+            <section v-if="activeTab === 'absensi' || activeTab === 'absensi-mandiri'" class="space-y-4">
               <div class="flex flex-col gap-3 rounded-lg border border-slate-800 bg-slate-900 p-4 sm:p-5 md:flex-row md:items-end md:justify-between">
                 <div>
                   <p class="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">Absensi</p>
-                  <h3 class="mt-2 text-xl font-semibold text-slate-50 sm:text-2xl">Rekap absensi</h3>
+                  <h3 class="mt-2 text-xl font-semibold text-slate-50 sm:text-2xl">{{ isAttendanceSelfView ? 'Absensi mandiri' : 'Rekap absensi' }}</h3>
                   <p class="mt-2 text-sm text-slate-400">
-                    Absensi karyawan diproses lewat tombol di bawah ini. Owner/Leader bisa memantau, menambah, dan mengoreksi absensi (misalnya izin/sakit/cuti atau lupa absen) dari sini.
+                    {{ isAttendanceSelfView ? 'Catat absensi masuk dan pulang Anda menggunakan kamera, lalu lihat riwayat absensi pribadi.' : 'Owner/Kepala Toko bisa memantau, menambah, dan mengoreksi absensi (misalnya izin/sakit/cuti atau lupa absen) dari sini.' }}
                   </p>
                 </div>
                 <div class="flex items-center gap-3">
-                  <span class="text-sm text-slate-400">{{ isSelfService ? 'Riwayat Anda' : 'Semua karyawan' }}</span>
-                  <button v-if="(isOwner || isLeader) && bulkSelection.absensi.length" :disabled="bulkBusy" @click="bulkDeleteSelected('absensi', 'attendance', attendanceRows)" class="rounded-md border border-red-500 px-4 py-2 text-sm font-semibold text-red-300 transition hover:border-red-400 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-60">
+                  <span class="text-sm text-slate-400">{{ isAttendanceSelfView ? 'Riwayat Anda' : 'Semua karyawan' }}</span>
+                  <button v-if="!isAttendanceSelfView && (isOwner || isLeader) && bulkSelection.absensi.length" :disabled="bulkBusy" @click="bulkDeleteSelected('absensi', 'attendance', attendanceViewRows)" class="rounded-md border border-red-500 px-4 py-2 text-sm font-semibold text-red-300 transition hover:border-red-400 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-60">
                     Hapus Terpilih ({{ bulkSelection.absensi.length }})
                   </button>
-                  <button v-if="isOwner || isLeader" @click="addManualAttendance" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">
+                  <button v-if="!isAttendanceSelfView && (isOwner || isLeader)" @click="addManualAttendance" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">
                     Tambah Absensi
                   </button>
                 </div>
               </div>
 
-              <div v-if="isSelfService" class="rounded-lg border border-slate-800 bg-slate-900 p-4 sm:p-5">
+              <div v-if="isAttendanceSelfView" class="rounded-lg border border-slate-800 bg-slate-900 p-4 sm:p-5">
                 <template v-if="!faceProfile?.registered">
                   <p class="text-sm text-slate-300">Wajah Anda belum terdaftar. Daftarkan wajah terlebih dahulu sebelum bisa absen.</p>
                   <button @click="activeTab = 'wajah'" class="mt-3 rounded-md bg-cyan-500 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">
@@ -797,7 +797,7 @@
                 </template>
               </div>
 
-              <div v-if="isOwner || isLeader" class="rounded-lg border border-slate-800 bg-slate-900 p-4">
+              <div v-if="!isAttendanceSelfView && (isOwner || isLeader)" class="rounded-lg border border-slate-800 bg-slate-900 p-4">
                 <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.2fr_160px_160px_auto_auto] xl:items-end">
                   <div>
                     <label class="mb-1 block text-xs text-slate-400">Cari Karyawan</label>
@@ -817,7 +817,7 @@
               </div>
 
               <div class="space-y-3 md:hidden">
-                <div v-for="row in attendanceRows" :key="'attendance-mobile-'+row.id" class="rounded-lg border border-slate-800 bg-slate-900 p-4">
+                <div v-for="row in attendanceViewRows" :key="'attendance-mobile-'+row.id" class="rounded-lg border border-slate-800 bg-slate-900 p-4">
                   <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0">
                       <p class="truncate font-semibold text-slate-100">{{ row.user?.fullName || user.fullName }}</p>
@@ -857,14 +857,14 @@
                     </a>
                   </div>
                 </div>
-                <div v-if="!attendanceRows.length" class="rounded-lg border border-slate-800 bg-slate-900 px-4 py-8 text-center text-sm text-slate-500">Belum ada data absensi.</div>
+                <div v-if="!attendanceViewRows.length" class="rounded-lg border border-slate-800 bg-slate-900 px-4 py-8 text-center text-sm text-slate-500">Belum ada data absensi.</div>
               </div>
               <div class="hidden overflow-x-auto rounded-lg border border-slate-800 bg-slate-900 md:block">
                 <table v-sortable-table class="min-w-full text-left text-sm">
                   <thead class="border-b border-slate-800 text-slate-400">
                     <tr>
-                      <th v-if="isOwner || isLeader" class="px-4 py-3">
-                        <input type="checkbox" :checked="isAllRowsSelected('absensi', attendanceRows)" @change="toggleSelectAllRows('absensi', attendanceRows)" class="rounded border-slate-600 bg-slate-950" />
+                      <th v-if="!isAttendanceSelfView && (isOwner || isLeader)" class="px-4 py-3">
+                        <input type="checkbox" :checked="isAllRowsSelected('absensi', attendanceViewRows)" @change="toggleSelectAllRows('absensi', attendanceViewRows)" class="rounded border-slate-600 bg-slate-950" />
                       </th>
                       <th class="px-4 py-3">Nama</th>
                       <th class="px-4 py-3">Tanggal</th>
@@ -875,13 +875,13 @@
                       <th class="px-4 py-3">Telat</th>
                       <th class="px-4 py-3">Lokasi</th>
                       <th class="px-4 py-3">Foto</th>
-                      <th v-if="isOwner || isLeader" class="px-4 py-3 text-right">Jam Lembur</th>
-                      <th v-if="isOwner || isLeader" class="px-4 py-3 text-right">Aksi</th>
+                      <th v-if="!isAttendanceSelfView && (isOwner || isLeader)" class="px-4 py-3 text-right">Jam Lembur</th>
+                      <th v-if="!isAttendanceSelfView && (isOwner || isLeader)" class="px-4 py-3 text-right">Aksi</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="row in attendanceRows" :key="'attendance-'+row.id" class="border-b border-slate-800 last:border-0">
-                      <td v-if="isOwner || isLeader" class="px-4 py-3">
+                    <tr v-for="row in attendanceViewRows" :key="'attendance-'+row.id" class="border-b border-slate-800 last:border-0">
+                      <td v-if="!isAttendanceSelfView && (isOwner || isLeader)" class="px-4 py-3">
                         <input type="checkbox" :checked="isRowSelected('absensi', row)" @change="toggleRowSelection('absensi', row)" class="rounded border-slate-600 bg-slate-950" />
                       </td>
                       <td class="px-4 py-3 text-slate-100">{{ row.user?.fullName || user.fullName }}</td>
@@ -911,16 +911,16 @@
                           <span v-if="!row.checkInPhotoUrl && !row.checkOutPhotoUrl" class="text-slate-500">-</span>
                         </div>
                       </td>
-                      <td v-if="isOwner || isLeader" class="px-4 py-3 text-right text-slate-300">
+                      <td v-if="!isAttendanceSelfView && (isOwner || isLeader)" class="px-4 py-3 text-right text-slate-300">
                         {{ row.overtimeHours ? row.overtimeHours.toFixed(1) + ' jam' : '-' }}
                       </td>
-                      <td v-if="isOwner || isLeader" class="px-4 py-3 text-right">
+                      <td v-if="!isAttendanceSelfView && (isOwner || isLeader)" class="px-4 py-3 text-right">
                         <button @click="editAttendanceRow(row)" class="rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-200 transition hover:border-cyan-400 hover:text-cyan-300">Ubah</button>
                         <button @click="removeRow('attendance', row)" class="ml-2 rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-200 transition hover:border-red-500 hover:text-red-300">Hapus</button>
                       </td>
                     </tr>
-                    <tr v-if="!attendanceRows.length">
-                      <td :colspan="isOwner || isLeader ? 12 : 9" class="px-4 py-8 text-center text-slate-500">Belum ada data absensi.</td>
+                    <tr v-if="!attendanceViewRows.length">
+                      <td :colspan="!isAttendanceSelfView && (isOwner || isLeader) ? 12 : 9" class="px-4 py-8 text-center text-slate-500">Belum ada data absensi.</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1368,6 +1368,13 @@
                   <div class="rounded-md border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-slate-100">{{ salaryWeekLabel }}</div>
                   <button @click="nextSalaryWeek" class="rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300 transition hover:border-cyan-400 hover:text-cyan-200">&gt;</button>
                 </div>
+              </div>
+              <div class="flex flex-col gap-2 rounded-lg border border-slate-800 bg-slate-900 p-5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p class="text-lg font-semibold text-slate-50">Total Gaji</p>
+                  <p class="mt-1 text-xs text-slate-400">Periode penggajian {{ salaryWeekLabel }}</p>
+                </div>
+                <p class="text-2xl font-semibold text-emerald-300 sm:text-3xl">{{ formatMoney(salaryTotal) }}</p>
               </div>
               <div v-if="isOwner || isLeader" class="flex justify-end">
                 <button @click="markAllSalaryPaid" :disabled="salaryBusy" class="rounded-md bg-emerald-500/15 px-4 py-2 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60">
@@ -2514,6 +2521,7 @@
           holidays: [],
           employeeRoster: [],
           attendanceRows: [],
+          selfAttendanceRows: [],
           salaryReport: [],
           profitReport: null,
           profitPdfBusy: false,
@@ -2588,14 +2596,26 @@
         isSelfService() {
           return ['karyawan', 'admin'].includes(this.user?.role);
         },
+        canSelfAttendance() {
+          return ['leader', 'karyawan', 'admin'].includes(this.user?.role);
+        },
+        isAttendanceSelfView() {
+          return this.isSelfService || this.activeTab === 'absensi-mandiri';
+        },
+        selfAttendanceTab() {
+          return this.isLeader ? 'absensi-mandiri' : 'absensi';
+        },
+        attendanceViewRows() {
+          return this.isAttendanceSelfView ? this.selfAttendanceRows : this.attendanceRows;
+        },
         roleLabel() {
-          const labels = { owner: 'Owner', leader: 'Leader', admin: 'Admin', karyawan: 'Karyawan' };
+          const labels = { owner: 'Owner', leader: 'Kepala Toko', admin: 'Admin', karyawan: 'Karyawan' };
           return labels[this.user?.role] || 'Karyawan';
         },
         todayAttendance() {
-          if (!this.isSelfService) return null;
+          if (!this.canSelfAttendance) return null;
           const today = todayString();
-          return this.attendanceRows.find((row) => row.workDate === today) || null;
+          return this.selfAttendanceRows.find((row) => row.workDate === today) || null;
         },
         mySalaryRow() {
           if (!this.isSelfService) return null;
@@ -2637,6 +2657,9 @@
         salaryReportOthers() {
           return this.salaryReport.filter((row) => row.user.role !== 'owner');
         },
+        salaryTotal() {
+          return this.salaryReport.reduce((total, row) => total + (Number(row.netSalary) || 0), 0);
+        },
         saleCreateTotals() {
           const items = this.saleCreateModal.items;
           const totalJumlah = items.reduce((sum, item) => sum + (Number(item.qty) || 0) * (Number(item.price) || 0), 0);
@@ -2665,6 +2688,8 @@
           if (this.isLeader) {
             return [
               { key: 'absensi', label: 'Absensi' },
+              { key: 'wajah', label: 'Wajah Saya' },
+              { key: 'absensi-mandiri', label: 'Absensi Mandiri' },
               { key: 'penjualan', label: 'Rekap Penjualan' },
               { key: 'operasional', label: 'Beban Operasional' },
               { key: 'marketing', label: 'Beban Marketing' },
@@ -2771,8 +2796,8 @@
           if (previous === 'wajah' && next !== 'wajah') {
             this.stopCamera();
           }
-          if (next === 'wajah' && this.isSelfService && this.faceProfile?.registered && !this.faceRegisterBypass) {
-            this.activeTab = 'absensi';
+          if (next === 'wajah' && this.canSelfAttendance && this.faceProfile?.registered && !this.faceRegisterBypass) {
+            this.activeTab = this.selfAttendanceTab;
             return;
           }
           if (next === 'wajah') {
@@ -2892,6 +2917,7 @@
           this.operationalExpenses = [];
           this.marketingExpenses = [];
           this.attendanceRows = [];
+          this.selfAttendanceRows = [];
           this.salaryReport = [];
           this.profitReport = null;
           this.settingsResetPassword = '';
@@ -3442,9 +3468,9 @@
               tasks.marketingExpenses = this.request('/api/expenses/marketing');
               tasks.marketingCategories = this.request('/api/expense-categories?kind=marketing');
             }
-            if (this.isSelfService) {
+            if (this.canSelfAttendance) {
               tasks.shifts = this.request('/api/shifts');
-              tasks.attendanceRows = this.request('/api/attendance/me');
+              tasks.selfAttendanceRows = this.request('/api/attendance/me');
               tasks.faceProfile = this.request('/api/face/me').catch(() => ({ registered: false, faceDescriptor: null, faceImageFilename: '', faceImageUrl: '', faceImageSize: 0, faceRegisteredAt: null }));
             }
 
@@ -3486,8 +3512,11 @@
             if (role === 'owner') {
               await this.fetchProducts();
             }
-            if (this.isSelfService) {
-              this.attendanceRows = results.attendanceRows;
+            if (this.canSelfAttendance) {
+              this.selfAttendanceRows = results.selfAttendanceRows || [];
+              if (this.isSelfService) {
+                this.attendanceRows = this.selfAttendanceRows;
+              }
               this.faceProfile = results.faceProfile || this.faceProfile;
               if (this.absenSelectedShiftId === null) {
                 this.absenSelectedShiftId = this.user?.shiftId || null;
@@ -4171,7 +4200,7 @@
                 { key: 'username', label: 'Username', type: 'text' },
                 { key: 'password', label: row ? 'Password Baru' : 'Password', type: 'password', help: row ? 'Kosongkan jika password tidak diganti.' : 'Password awal akan digunakan untuk login.' },
                 { key: 'fullName', label: 'Nama Lengkap', type: 'text' },
-                { key: 'role', label: 'Role', type: 'select', options: [{ label: 'Owner', value: 'owner' }, { label: 'Leader', value: 'leader' }, { label: 'Admin', value: 'admin' }, { label: 'Karyawan', value: 'karyawan' }] },
+                { key: 'role', label: 'Role', type: 'select', options: [{ label: 'Owner', value: 'owner' }, { label: 'Kepala Toko', value: 'leader' }, { label: 'Admin', value: 'admin' }, { label: 'Karyawan', value: 'karyawan' }] },
                 { key: 'jobTitle', label: 'Jabatan', type: 'text' },
                 { key: 'workShift', label: 'Shift Kerja (label)', type: 'text' },
                 { key: 'shiftId', label: 'Shift Kerja (Dinamis)', type: 'select', options: [{ label: 'Standar (ikut jam kerja umum)', value: null }, ...this.shifts.map((shift) => ({ label: shift.name, value: shift.id }))] },
@@ -4654,8 +4683,8 @@
         },
         async saveFace() {
           try {
-            if (!['karyawan', 'admin'].includes(this.user.role)) {
-              throw new Error('Daftar wajah hanya untuk karyawan atau admin.');
+            if (!['leader', 'karyawan', 'admin'].includes(this.user.role)) {
+              throw new Error('Daftar wajah hanya untuk kepala toko, karyawan, atau admin.');
             }
             if (!this.faceCapturedBlob) {
               throw new Error('Ambil foto wajah terlebih dahulu.');
@@ -4694,8 +4723,8 @@
         },
         async startAbsenCapture() {
           try {
-            if (!['karyawan', 'admin'].includes(this.user.role)) {
-              throw new Error('Absensi hanya untuk karyawan atau admin.');
+            if (!['leader', 'karyawan', 'admin'].includes(this.user.role)) {
+              throw new Error('Absensi hanya untuk kepala toko, karyawan, atau admin.');
             }
             if (!this.faceProfile?.registered) {
               throw new Error('Wajah belum terdaftar. Silakan daftar wajah dulu.');
@@ -4723,8 +4752,8 @@
         },
         async absenSekarang() {
           try {
-            if (!['karyawan', 'admin'].includes(this.user.role)) {
-              throw new Error('Absensi hanya untuk karyawan atau admin.');
+            if (!['leader', 'karyawan', 'admin'].includes(this.user.role)) {
+              throw new Error('Absensi hanya untuk kepala toko, karyawan, atau admin.');
             }
             if (!this.faceProfile?.registered) {
               throw new Error('Wajah belum terdaftar. Silakan daftar wajah dulu.');
