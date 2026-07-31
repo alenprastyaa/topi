@@ -188,6 +188,18 @@
             <p class="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">SDS Apps</p>
             <h1 class="mt-2 text-xl font-semibold text-slate-50">Panel Operasional</h1>
             <p class="mt-2 text-sm text-slate-400">Role: {{ roleLabel }}</p>
+            <div class="mt-3">
+              <label v-if="isOwner" class="mb-1 block text-xs text-slate-500">Bisnis Aktif</label>
+              <select
+                v-if="isOwner"
+                v-model="currentBusinessId"
+                @change="onBusinessChange"
+                class="w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100 outline-none focus:border-cyan-400"
+              >
+                <option v-for="b in businesses" :key="b.id" :value="String(b.id)">{{ b.name }}</option>
+              </select>
+              <p v-else-if="businesses.length" class="text-xs text-slate-400">Bisnis: <span class="font-medium text-slate-200">{{ businesses[0].name }}</span></p>
+            </div>
           </div>
           <div class="flex-1 overflow-y-auto px-3 py-4 scrollbar-thin">
             <button
@@ -241,6 +253,17 @@
             </div>
 
             <div v-if="mobileMenuOpen" class="border-t border-slate-800 bg-slate-950 px-4 py-3 lg:hidden">
+              <div v-if="isOwner" class="mb-3">
+                <label class="mb-1 block text-xs text-slate-500">Bisnis Aktif</label>
+                <select
+                  v-model="currentBusinessId"
+                  @change="onBusinessChange"
+                  class="w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100 outline-none focus:border-cyan-400"
+                >
+                  <option v-for="b in businesses" :key="b.id" :value="String(b.id)">{{ b.name }}</option>
+                </select>
+              </div>
+              <p v-else-if="businesses.length" class="mb-3 text-xs text-slate-400">Bisnis: <span class="font-medium text-slate-200">{{ businesses[0].name }}</span></p>
               <div class="grid gap-2">
                 <button
                   v-for="item in menuItems"
@@ -292,7 +315,8 @@
                         <div class="mt-2 text-xs text-slate-400">
                           {{ dashboardRangeFrom && dashboardRangeTo ? `${formatDate(dashboardRangeFrom)} - ${formatDate(dashboardRangeTo)}` : 'Belum ada rentang dipilih' }}
                         </div>
-                        <div v-if="dashboardRangePickerOpen" class="absolute left-0 top-[calc(100%+0.75rem)] z-40 w-[min(92vw,42rem)] rounded-2xl border border-slate-800 bg-slate-950 p-4 shadow-2xl shadow-black/40">
+                        <div v-if="dashboardRangePickerOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm" @click.self="dashboardRangePickerOpen = false">
+                        <div class="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-800 bg-slate-950 p-4 shadow-2xl shadow-black/40">
                           <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
                             <div>
                               <p class="text-sm font-semibold text-slate-100">Pilih range tanggal</p>
@@ -344,6 +368,7 @@
                               Terapkan
                             </button>
                           </div>
+                        </div>
                         </div>
                       </div>
                     </template>
@@ -1541,7 +1566,8 @@
                       <div class="mt-2 text-xs text-slate-400">
                         {{ dashboardRangeFrom && dashboardRangeTo ? `${formatDate(dashboardRangeFrom)} - ${formatDate(dashboardRangeTo)}` : 'Belum ada rentang dipilih' }}
                       </div>
-                      <div v-if="dashboardRangePickerOpen" class="absolute left-0 top-[calc(100%+0.75rem)] z-40 w-[min(92vw,42rem)] rounded-2xl border border-slate-800 bg-slate-950 p-4 shadow-2xl shadow-black/40">
+                      <div v-if="dashboardRangePickerOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm" @click.self="dashboardRangePickerOpen = false">
+                      <div class="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-800 bg-slate-950 p-4 shadow-2xl shadow-black/40">
                         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
                           <div>
                             <p class="text-sm font-semibold text-slate-100">Pilih range tanggal</p>
@@ -1593,6 +1619,7 @@
                             Terapkan
                           </button>
                         </div>
+                      </div>
                       </div>
                     </div>
                   </template>
@@ -1838,15 +1865,15 @@
               <div class="rounded-lg border border-slate-800 bg-slate-900 p-5">
                 <p class="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">Pengaturan</p>
                 <h3 class="mt-2 text-2xl font-semibold text-slate-50">Reset database</h3>
-                <p class="mt-2 text-sm text-slate-400">Hapus seluruh data transaksi dan master, lalu sistem dibuat ulang. Aksi ini hanya bisa dijalankan dengan password admin.</p>
+                <p class="mt-2 text-sm text-slate-400">Hapus seluruh data transaksi dan master untuk bisnis yang sedang aktif ({{ currentBusinessId === 'all' ? 'pilih satu bisnis dahulu' : (businesses.find(b => String(b.id) === String(currentBusinessId))?.name || '-') }}), lalu data bisnis tersebut dibuat ulang. Bisnis lain dan akun owner tidak terpengaruh. Aksi ini hanya bisa dijalankan dengan password admin.</p>
               </div>
               <div class="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
                 <div class="rounded-lg border border-amber-500/20 bg-amber-500/10 p-5 text-sm text-amber-100">
-                  <p class="font-semibold">Yang akan dihapus</p>
+                  <p class="font-semibold">Yang akan dihapus (bisnis aktif saja)</p>
                   <ul class="mt-3 space-y-2 text-amber-50/90">
                     <li>• Data penjualan dan import Excel</li>
                     <li>• Data barang, toko, beban, absensi, dan laporan</li>
-                    <li>• Semua akun selain admin akan direset</li>
+                    <li>• Karyawan pada bisnis ini (akun owner tidak terhapus)</li>
                   </ul>
                 </div>
                 <div class="rounded-lg border border-slate-800 bg-slate-900 p-5">
@@ -2405,6 +2432,8 @@
           loading: true,
           token: localStorage.getItem('topi_token') || '',
           user: null,
+          businesses: [],
+          currentBusinessId: localStorage.getItem('sds_business_id') || '',
           loginForm: {
             username: 'admin',
             password: 'admin123',
@@ -2813,7 +2842,38 @@
           if (this.token) {
             headers.Authorization = `Bearer ${this.token}`;
           }
+          if (this.currentBusinessId) {
+            headers['X-Business-Id'] = this.currentBusinessId;
+          }
           return headers;
+        },
+        syncCurrentBusiness() {
+          const ids = this.businesses.map((b) => String(b.id));
+          if (this.currentBusinessId && !ids.includes(String(this.currentBusinessId))) {
+            this.currentBusinessId = '';
+          }
+          if (!this.currentBusinessId && this.businesses.length) {
+            this.currentBusinessId = String(this.businesses[0].id);
+          }
+          localStorage.setItem('sds_business_id', this.currentBusinessId || '');
+        },
+        async onBusinessChange() {
+          localStorage.setItem('sds_business_id', this.currentBusinessId || '');
+          this.dashboard = null;
+          this.users = [];
+          this.stores = [];
+          this.products = [];
+          this.sales = [];
+          this.operationalExpenses = [];
+          this.marketingExpenses = [];
+          this.attendanceRows = [];
+          this.selfAttendanceRows = [];
+          this.salaryReport = [];
+          this.profitReport = null;
+          this.productFilters = { search: '', page: 1, limit: 10, sortBy: 'createdAt', sortDir: 'desc' };
+          this.saleFilters = { search: '', storeId: '', from: '', to: '', page: 1, limit: 10, sortBy: 'saleDate', sortDir: 'desc' };
+          this.dashboardFilters = { platform: '', storeId: '', sku: '' };
+          await this.refreshAll();
         },
         async request(url, options = {}) {
           const response = await fetch(url, {
@@ -2846,8 +2906,14 @@
             return;
           }
           try {
-            const me = await this.request('/api/auth/me');
-            this.user = me;
+            const response = await fetch('/api/auth/me', { headers: this.apiHeaders() });
+            const payload = await response.json();
+            if (!response.ok || payload.ok === false) {
+              throw new Error(payload.message || 'Sesi tidak valid.');
+            }
+            this.user = payload.data;
+            this.businesses = payload.availableBusinesses || [];
+            this.syncCurrentBusiness();
             this.activeTab = this.menuItems[0]?.key || 'dashboard';
             this.loading = false;
             await this.refreshAll();
@@ -2871,6 +2937,8 @@
             this.token = payload.token;
             localStorage.setItem('topi_token', payload.token);
             this.user = payload.data;
+            this.businesses = payload.availableBusinesses || [];
+            this.syncCurrentBusiness();
             this.activeTab = this.menuItems[0]?.key || 'dashboard';
             await this.refreshAll();
             await Swal.fire({
@@ -2892,6 +2960,7 @@
           this.stopCamera();
           this.token = '';
           this.user = null;
+          this.businesses = [];
           this.mobileMenuOpen = false;
           this.dashboard = null;
           this.users = [];
@@ -3544,6 +3613,7 @@
               method: 'POST',
               headers: {
                 Authorization: `Bearer ${this.token}`,
+                'X-Business-Id': this.currentBusinessId,
               },
               body: form,
             });
@@ -3582,7 +3652,7 @@
             const { from, to } = this.dashboardPeriod();
             const query = this.buildQuery({ from, to });
             const response = await fetch(`/api/reports/profit/pdf${query ? `?${query}` : ''}`, {
-              headers: { Authorization: `Bearer ${this.token}` },
+              headers: { Authorization: `Bearer ${this.token}`, 'X-Business-Id': this.currentBusinessId },
             });
             if (!response.ok) {
               const payload = await response.json().catch(() => null);
@@ -3613,6 +3683,7 @@
             const response = await fetch('/api/sales/template', {
               headers: {
                 Authorization: `Bearer ${this.token}`,
+                'X-Business-Id': this.currentBusinessId,
               },
             });
             if (!response.ok) {
@@ -3668,6 +3739,7 @@
             const response = await fetch('/api/products/template', {
               headers: {
                 Authorization: `Bearer ${this.token}`,
+                'X-Business-Id': this.currentBusinessId,
               },
             });
             if (!response.ok) {
@@ -3713,6 +3785,7 @@
               method: 'POST',
               headers: {
                 Authorization: `Bearer ${this.token}`,
+                'X-Business-Id': this.currentBusinessId,
               },
               body: form,
             });
@@ -3745,6 +3818,7 @@
             const response = await fetch('/api/expenses/marketing/template', {
               headers: {
                 Authorization: `Bearer ${this.token}`,
+                'X-Business-Id': this.currentBusinessId,
               },
             });
             if (!response.ok) {
@@ -3790,6 +3864,7 @@
               method: 'POST',
               headers: {
                 Authorization: `Bearer ${this.token}`,
+                'X-Business-Id': this.currentBusinessId,
               },
               body: form,
             });
@@ -3818,6 +3893,15 @@
         },
         async resetDatabase() {
           try {
+            if (this.currentBusinessId === 'all' || !this.currentBusinessId) {
+              Swal.fire({
+                icon: 'warning',
+                title: 'Pilih bisnis dahulu',
+                text: 'Pilih satu bisnis aktif (bukan "Semua Bisnis") sebelum mereset data.',
+                confirmButtonColor: '#06b6d4',
+              });
+              return;
+            }
             if (!this.settingsResetPassword) {
               Swal.fire({
                 icon: 'warning',
@@ -3827,10 +3911,11 @@
               });
               return;
             }
+            const businessName = this.businesses.find((b) => String(b.id) === String(this.currentBusinessId))?.name || 'bisnis aktif';
             const confirm = await Swal.fire({
               icon: 'warning',
               title: 'Reset database?',
-              text: 'Semua data transaksi, barang, toko, dan laporan akan dihapus. Admin akan dibuat ulang.',
+              text: `Semua data transaksi, barang, toko, karyawan, dan laporan milik "${businessName}" akan dihapus. Bisnis lain dan akun owner tidak terpengaruh.`,
               showCancelButton: true,
               confirmButtonText: 'Ya, reset',
               cancelButtonText: 'Batal',
@@ -3851,11 +3936,11 @@
             await Swal.fire({
               icon: 'success',
               title: 'Database direset',
-              text: payload.message || 'Silakan masuk kembali.',
+              text: payload.message || `Data ${businessName} berhasil direset.`,
               confirmButtonColor: '#06b6d4',
             });
             this.settingsResetPassword = '';
-            this.logout(true);
+            await this.refreshAll();
           } catch (error) {
             Swal.fire({
               icon: 'error',
@@ -4193,6 +4278,7 @@
                 { key: 'password', label: row ? 'Password Baru' : 'Password', type: 'password', help: row ? 'Kosongkan jika password tidak diganti.' : 'Password awal akan digunakan untuk login.' },
                 { key: 'fullName', label: 'Nama Lengkap', type: 'text' },
                 { key: 'role', label: 'Role', type: 'select', options: [{ label: 'Owner', value: 'owner' }, { label: 'Kepala Toko', value: 'leader' }, { label: 'Admin', value: 'admin' }, { label: 'Karyawan', value: 'karyawan' }] },
+                { key: 'businessId', label: 'Bisnis', type: 'select', help: 'Diabaikan untuk role Owner (owner selalu akses semua bisnis).', options: this.businesses.map((b) => ({ label: b.name, value: b.id })) },
                 { key: 'jobTitle', label: 'Jabatan', type: 'text' },
                 { key: 'workShift', label: 'Shift Kerja (label)', type: 'text' },
                 { key: 'shiftId', label: 'Shift Kerja (Dinamis)', type: 'select', options: [{ label: 'Standar (ikut jam kerja umum)', value: null }, ...this.shifts.map((shift) => ({ label: shift.name, value: shift.id }))] },
@@ -4202,7 +4288,15 @@
                 { key: 'overtimeRatePerHour', label: 'Tarif Lembur per Jam', type: 'number', help: 'Dikalikan otomatis dengan jam lembur dari absensi (Minggu/hari libur, atau lembur yang disetujui).' },
                 { key: 'active', label: 'Status Akun', type: 'select', options: [{ label: 'Aktif', value: true }, { label: 'Nonaktif', value: false }] },
               ],
-              defaults: { role: 'karyawan', active: true, dailyWage: 0, mealAllowance: 0, overtimeRatePerHour: 0, shiftId: null },
+              defaults: {
+                role: 'karyawan',
+                active: true,
+                dailyWage: 0,
+                mealAllowance: 0,
+                overtimeRatePerHour: 0,
+                shiftId: null,
+                businessId: (this.currentBusinessId && this.currentBusinessId !== 'all') ? Number(this.currentBusinessId) : (this.businesses[0]?.id || null),
+              },
             },
             shift: {
               title: row ? 'Ubah Shift' : 'Tambah Shift',
@@ -4332,6 +4426,7 @@
             form.mealAllowance = Number(form.mealAllowance || 0);
             form.overtimeRatePerHour = Number(form.overtimeRatePerHour || 0);
             form.shiftId = form.shiftId === '' || form.shiftId === undefined ? null : form.shiftId;
+            form.businessId = form.businessId === '' || form.businessId === undefined || form.businessId === null ? null : Number(form.businessId);
             if (!form.password) delete form.password;
           }
           if (entity === 'shift') {

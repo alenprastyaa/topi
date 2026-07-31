@@ -194,7 +194,30 @@ const sequelize = new Sequelize(DB_NAME, DB_USER, DB_PASSWORD, {
   },
 });
 
+const Business = sequelize.define('Business', {
+  name: {
+    type: DataTypes.STRING(120),
+    allowNull: false,
+  },
+  slug: {
+    type: DataTypes.STRING(120),
+    allowNull: false,
+    unique: true,
+  },
+  active: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
+  },
+}, {
+  tableName: 'businesses',
+});
+
 const User = sequelize.define('User', {
+  businessId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
   username: {
     type: DataTypes.STRING(100),
     allowNull: false,
@@ -296,6 +319,10 @@ const Platform = sequelize.define('Platform', {
 });
 
 const Store = sequelize.define('Store', {
+  businessId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
   platform: {
     type: DataTypes.STRING(80),
     allowNull: false,
@@ -318,6 +345,10 @@ const Store = sequelize.define('Store', {
 });
 
 const Product = sequelize.define('Product', {
+  businessId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
   sku: {
     type: DataTypes.STRING(120),
     allowNull: false,
@@ -337,9 +368,19 @@ const Product = sequelize.define('Product', {
   },
 }, {
   tableName: 'products',
+  indexes: [
+    // Not unique: production data already has ~30 pre-existing duplicate SKUs
+    // (never enforced before this feature). Kept as a plain index for lookup
+    // performance; app logic scopes by businessId but doesn't hard-fail on dupes.
+    { fields: ['business_id', 'sku'] },
+  ],
 });
 
 const Sale = sequelize.define('Sale', {
+  businessId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
   saleDate: {
     type: DataTypes.DATEONLY,
     allowNull: false,
@@ -399,6 +440,10 @@ const Sale = sequelize.define('Sale', {
 });
 
 const OperationalExpense = sequelize.define('OperationalExpense', {
+  businessId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
   expenseDate: {
     type: DataTypes.DATEONLY,
     allowNull: false,
@@ -426,6 +471,10 @@ const OperationalExpense = sequelize.define('OperationalExpense', {
 });
 
 const MarketingExpense = sequelize.define('MarketingExpense', {
+  businessId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
   expenseDate: {
     type: DataTypes.DATEONLY,
     allowNull: false,
@@ -535,6 +584,10 @@ const Attendance = sequelize.define('Attendance', {
 });
 
 const AttendanceSetting = sequelize.define('AttendanceSetting', {
+  businessId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
   checkInStart: {
     type: DataTypes.STRING(5),
     allowNull: false,
@@ -586,6 +639,10 @@ const AttendanceSetting = sequelize.define('AttendanceSetting', {
 });
 
 const Shift = sequelize.define('Shift', {
+  businessId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
   name: {
     type: DataTypes.STRING(60),
     allowNull: false,
@@ -677,6 +734,10 @@ const Holiday = sequelize.define('Holiday', {
 });
 
 const ExpenseCategory = sequelize.define('ExpenseCategory', {
+  businessId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
   name: {
     type: DataTypes.STRING(160),
     allowNull: false,
@@ -688,7 +749,7 @@ const ExpenseCategory = sequelize.define('ExpenseCategory', {
 }, {
   tableName: 'expense_categories',
   indexes: [
-    { unique: true, fields: ['name', 'kind'] },
+    { unique: true, fields: ['business_id', 'name', 'kind'] },
   ],
 });
 
@@ -705,16 +766,24 @@ User.belongsTo(Shift, { foreignKey: 'shiftId' });
 User.hasMany(SalaryPayment, { foreignKey: 'userId' });
 SalaryPayment.belongsTo(User, { foreignKey: 'userId' });
 
-async function getAttendanceSettings() {
-  let row = await AttendanceSetting.findOne({ order: [['id', 'ASC']] });
+async function getAttendanceSettings(businessId) {
+  let row = await AttendanceSetting.findOne({ where: { businessId }, order: [['id', 'ASC']] });
   if (!row) {
-    row = await AttendanceSetting.create({});
+    row = await AttendanceSetting.create({ businessId });
   }
   return row;
 }
 
+const serializeBusiness = (row) => ({
+  id: row.id,
+  name: row.name,
+  slug: row.slug,
+  active: Boolean(row.active),
+});
+
 const serializeUser = (user) => ({
   id: user.id,
+  businessId: user.businessId || null,
   username: user.username,
   fullName: user.fullName,
   role: user.role,
@@ -751,6 +820,7 @@ const serializePlatform = (row) => ({
 
 const serializeStore = (row) => ({
   id: row.id,
+  businessId: row.businessId || null,
   platformId: row.platformId || '',
   platform: row.platform,
   platformData: row.Platform ? serializePlatform(row.Platform) : null,
@@ -763,6 +833,7 @@ const serializeStore = (row) => ({
 
 const serializeShift = (row) => ({
   id: row.id,
+  businessId: row.businessId || null,
   name: row.name,
   checkInStart: row.checkInStart,
   checkInDeadline: row.checkInDeadline,
@@ -775,6 +846,7 @@ const serializeShift = (row) => ({
 
 const serializeProduct = (row) => ({
   id: row.id,
+  businessId: row.businessId || null,
   sku: row.sku,
   name: row.name,
   variant: row.variant,
@@ -785,6 +857,7 @@ const serializeProduct = (row) => ({
 
 const serializeSale = (row, { includeHpp = true } = {}) => ({
   id: row.id,
+  businessId: row.businessId || null,
   saleDate: row.saleDate,
   platformId: row.platformId || '',
   platformData: row.Platform ? serializePlatform(row.Platform) : null,
@@ -804,6 +877,7 @@ const serializeSale = (row, { includeHpp = true } = {}) => ({
 
 const serializeOperational = (row) => ({
   id: row.id,
+  businessId: row.businessId || null,
   expenseDate: row.expenseDate,
   category: row.category,
   description: row.description,
@@ -815,6 +889,7 @@ const serializeOperational = (row) => ({
 
 const serializeMarketing = (row) => ({
   id: row.id,
+  businessId: row.businessId || null,
   expenseDate: row.expenseDate,
   category: row.category,
   platformId: row.platformId || '',
@@ -874,6 +949,7 @@ const serializeHoliday = (row) => ({
 
 const serializeExpenseCategory = (row) => ({
   id: row.id,
+  businessId: row.businessId || null,
   name: row.name,
   kind: row.kind,
 });
@@ -941,7 +1017,41 @@ async function loadCurrentUser(req, res, next) {
   }
 }
 
-const authRequired = [auth, loadCurrentUser];
+function resolveBusiness(req, res, next) {
+  const rawHeader = req.headers['x-business-id'];
+  const requested = rawHeader !== undefined ? toText(rawHeader) : toText(req.query.businessId);
+  if (req.user.role === 'owner') {
+    req.businessId = (!requested || requested.toLowerCase() === 'all') ? null : toInt(requested, null);
+    return next();
+  }
+  if (!req.user.businessId) {
+    return res.status(403).json({ ok: false, message: 'Akun Anda belum ditugaskan ke bisnis manapun. Hubungi owner.' });
+  }
+  req.businessId = req.user.businessId;
+  return next();
+}
+
+// req.businessId === null means "all businesses" (owner cross-business view, read-only).
+function businessWhere(req, extraWhere = {}) {
+  if (req.businessId === null || req.businessId === undefined) return extraWhere;
+  return { ...extraWhere, businessId: req.businessId };
+}
+
+function assertOwnedByBusiness(row, req) {
+  if (!row) return false;
+  if (req.businessId === null || req.businessId === undefined) return true;
+  return row.businessId === req.businessId;
+}
+
+function requireConcreteBusiness(req, res) {
+  if (req.businessId === null || req.businessId === undefined) {
+    res.status(400).json({ ok: false, message: 'Pilih bisnis terlebih dahulu. Data tidak bisa disimpan pada tampilan "Semua Bisnis".' });
+    return false;
+  }
+  return true;
+}
+
+const authRequired = [auth, loadCurrentUser, resolveBusiness];
 
 function buildSalaryRow(user, presentDays, attendanceRecords, paymentRow) {
   const dailyWage = user.dailyWage || 0;
@@ -976,7 +1086,7 @@ function buildSalaryRow(user, presentDays, attendanceRecords, paymentRow) {
 
 const SALE_GROUP_KEY_SQL = "CASE WHEN `order_number` IS NULL OR `order_number` = '' THEN CONCAT('__row_', `id`) ELSE `order_number` END";
 
-function buildDashboardSaleConditions({ from, to, channel, storeName, sku } = {}) {
+function buildDashboardSaleConditions({ from, to, channel, storeName, sku, businessId } = {}) {
   const conditions = [];
   const replacements = {};
   if (from) {
@@ -998,6 +1108,10 @@ function buildDashboardSaleConditions({ from, to, channel, storeName, sku } = {}
   if (sku) {
     conditions.push('`sales`.`sku` = :sku');
     replacements.sku = sku;
+  }
+  if (businessId !== null && businessId !== undefined) {
+    conditions.push('`sales`.`business_id` = :businessId');
+    replacements.businessId = businessId;
   }
   return { whereSql: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '', replacements };
 }
@@ -1061,7 +1175,7 @@ async function buildTopProducts(filters, limit = 5) {
     `SELECT \`sales\`.\`sku\` AS sku, MIN(\`products\`.\`name\`) AS name,
        SUM(\`sales\`.\`qty\`) AS qty, SUM(\`sales\`.\`subtotal\`) AS totalSales
      FROM \`sales\`
-     LEFT JOIN \`products\` ON \`products\`.\`sku\` = \`sales\`.\`sku\`
+     LEFT JOIN \`products\` ON \`products\`.\`sku\` = \`sales\`.\`sku\` AND \`products\`.\`business_id\` <=> \`sales\`.\`business_id\`
      ${whereSql}
      GROUP BY \`sales\`.\`sku\`
      ORDER BY totalSales DESC
@@ -1077,9 +1191,10 @@ async function buildTopProducts(filters, limit = 5) {
   }));
 }
 
-async function buildProfitSummary(from, to, saleFilters = {}) {
-  const saleWhere = { ...dateWhere('saleDate', from, to), ...saleFilters };
-  const expenseWhere = dateWhere('expenseDate', from, to);
+async function buildProfitSummary(from, to, saleFilters = {}, businessId = null) {
+  const bizWhere = (businessId === null || businessId === undefined) ? {} : { businessId };
+  const saleWhere = { ...dateWhere('saleDate', from, to), ...saleFilters, ...bizWhere };
+  const expenseWhere = { ...dateWhere('expenseDate', from, to), ...bizWhere };
   const reportDate = new Intl.DateTimeFormat('id-ID', {
     day: 'numeric',
     month: 'long',
@@ -1090,6 +1205,7 @@ async function buildProfitSummary(from, to, saleFilters = {}) {
   if (saleFilters.channel || saleFilters.storeName) {
     const matchingStores = await Store.findAll({
       where: {
+        ...bizWhere,
         ...(saleFilters.channel ? { platform: saleFilters.channel } : {}),
         ...(saleFilters.storeName ? { name: saleFilters.storeName } : {}),
       },
@@ -1277,10 +1393,11 @@ function dateWhere(field, from, to) {
   return { [field]: clause };
 }
 
-async function computeGajiTotalForPeriod(from, to) {
+async function computeGajiTotalForPeriod(from, to, businessId = null) {
   const attendanceWhere = dateWhere('workDate', from, to);
   const paymentWhere = dateWhere('weekStart', from, to);
-  const users = await User.findAll({ where: { active: true } });
+  const userWhere = { active: true, ...((businessId === null || businessId === undefined) ? {} : { businessId }) };
+  const users = await User.findAll({ where: userWhere });
   const attendanceRows = await Attendance.findAll({ where: attendanceWhere });
   const payments = await SalaryPayment.findAll({ where: paymentWhere });
 
@@ -1312,14 +1429,14 @@ async function computeGajiTotalForPeriod(from, to) {
   return total;
 }
 
-async function buildDashboard(from, to, { platform = '', storeName = '', sku = '' } = {}) {
-  const saleFilters = { from, to, channel: platform, storeName, sku };
+async function buildDashboard(from, to, { platform = '', storeName = '', sku = '', businessId = null } = {}) {
+  const saleFilters = { from, to, channel: platform, storeName, sku, businessId };
   const profitSummary = await buildProfitSummary(from, to, {
     ...(platform ? { channel: platform } : {}),
     ...(storeName ? { storeName } : {}),
     ...(sku ? { sku } : {}),
-  });
-  const gajiKaryawan = await computeGajiTotalForPeriod(from, to);
+  }, businessId);
+  const gajiKaryawan = await computeGajiTotalForPeriod(from, to, businessId);
   const totalBebanPeriode = profitSummary.totals.operational + profitSummary.totals.marketing + profitSummary.totals.adminFee + gajiKaryawan;
 
   const [totalOrders, revenueTrend, platformContribution, topProducts] = await Promise.all([
@@ -1377,10 +1494,10 @@ function createSimpleCrudRoutes(prefix, model, serializer, parser, options = {})
   const writeMiddleware = options.writeMiddleware || ownerOnly;
   app.get(`/api/${prefix}`, ...authRequired, async (req, res) => {
     try {
-      const where = {
+      const where = businessWhere(req, {
         ...(options.searchFields ? searchWhere(req.query.search, options.searchFields) : {}),
         ...(options.dateField ? dateWhere(options.dateField, toText(req.query.from), toText(req.query.to)) : {}),
-      };
+      });
       if (options.paginated) {
         const { page, limit, offset } = getPagination(req.query);
         const requestedSort = toText(req.query.sortBy);
@@ -1412,8 +1529,9 @@ function createSimpleCrudRoutes(prefix, model, serializer, parser, options = {})
 
   app.post(`/api/${prefix}`, ...authRequired, writeMiddleware, async (req, res) => {
     try {
-      const payload = await parser(req.body, null);
-      const row = await model.create(payload);
+      if (!requireConcreteBusiness(req, res)) return;
+      const payload = await parser(req.body, null, req.businessId);
+      const row = await model.create({ ...payload, businessId: req.businessId });
       const output = options.reload ? await model.findByPk(row.id, { include: options.include || [] }) : row;
       return res.status(201).json({ ok: true, data: serializer(output) });
     } catch (error) {
@@ -1424,10 +1542,10 @@ function createSimpleCrudRoutes(prefix, model, serializer, parser, options = {})
   app.put(`/api/${prefix}/:id`, ...authRequired, writeMiddleware, async (req, res) => {
     try {
       const row = await model.findByPk(req.params.id);
-      if (!row) {
+      if (!row || !assertOwnedByBusiness(row, req)) {
         return res.status(404).json({ ok: false, message: 'Data tidak ditemukan.' });
       }
-      const payload = await parser(req.body, row);
+      const payload = await parser(req.body, row, req.businessId);
       await row.update(payload);
       const output = options.reload ? await model.findByPk(row.id, { include: options.include || [] }) : row;
       return res.json({ ok: true, data: serializer(output) });
@@ -1439,7 +1557,7 @@ function createSimpleCrudRoutes(prefix, model, serializer, parser, options = {})
   app.delete(`/api/${prefix}/:id`, ...authRequired, writeMiddleware, async (req, res) => {
     try {
       const row = await model.findByPk(req.params.id);
-      if (!row) {
+      if (!row || !assertOwnedByBusiness(row, req)) {
         return res.status(404).json({ ok: false, message: 'Data tidak ditemukan.' });
       }
       await row.destroy();
@@ -1455,7 +1573,7 @@ function createSimpleCrudRoutes(prefix, model, serializer, parser, options = {})
       if (!ids.length) {
         return res.status(400).json({ ok: false, message: 'Pilih minimal satu data untuk dihapus.' });
       }
-      const deleted = await model.destroy({ where: { id: { [Op.in]: ids } } });
+      const deleted = await model.destroy({ where: businessWhere(req, { id: { [Op.in]: ids } }) });
       return res.json({ ok: true, message: `${deleted} data berhasil dihapus.`, data: { deleted } });
     } catch (error) {
       return res.status(500).json({ ok: false, message: 'Gagal menghapus data terpilih.' });
@@ -1533,7 +1651,7 @@ function parseOperational(body) {
   };
 }
 
-async function parseMarketing(body) {
+async function parseMarketing(body, existingRow, businessId) {
   const expenseDate = toText(body.expenseDate || body.date);
   const category = toText(body.category);
   const platformStore = toText(body.platformStore || body.platformAndStore);
@@ -1545,7 +1663,7 @@ async function parseMarketing(body) {
   let taxRate = body.taxRate === undefined || body.taxRate === null || body.taxRate === '' ? 0 : Number(body.taxRate);
   if (!Number.isFinite(taxRate)) taxRate = 0;
   if (taxRate === 0) {
-    const store = await Store.findOne({ where: { platformStore } });
+    const store = await Store.findOne({ where: { platformStore, ...(businessId ? { businessId } : {}) } });
     if (store) {
       taxRate = store.taxRate || 0;
     }
@@ -1564,7 +1682,7 @@ async function parseMarketing(body) {
   };
 }
 
-async function parseSale(body, existingRow) {
+async function parseSale(body, existingRow, businessId) {
   const saleDate = toText(body.saleDate || body.date);
   const channelInput = toText(body.channel);
   const channel = channelInput;
@@ -1574,7 +1692,7 @@ async function parseSale(body, existingRow) {
   if (!saleDate || !channel || !storeName || !sku) {
     throw new Error('Tanggal, channel, toko, dan SKU wajib diisi.');
   }
-  const product = await Product.findOne({ where: { sku } });
+  const product = await Product.findOne({ where: { sku, ...(businessId ? { businessId } : {}) } });
   const qty = Math.max(0, money(body.qty ?? 1));
   const price = money(body.price);
   const baseHpp = product ? product.hpp : money(body.hpp || 0);
@@ -1693,14 +1811,15 @@ const detectSaleTemplate = (headers) => {
   return '';
 };
 
-async function ensureImportedProduct(record, productHpp, summary) {
+async function ensureImportedProduct(record, productHpp, summary, businessId) {
   if (!record.sku) return 0;
-  const existing = await Product.findOne({ where: { sku: record.sku } });
+  const existing = await Product.findOne({ where: { sku: record.sku, businessId } });
   if (existing) {
     return existing.hpp || 0;
   }
   const hpp = productHpp.get(record.sku) || record.hpp || 0;
   await Product.create({
+    businessId,
     sku: record.sku,
     name: record.productName || record.sku,
     variant: record.variant || '-',
@@ -1710,7 +1829,7 @@ async function ensureImportedProduct(record, productHpp, summary) {
   return hpp;
 }
 
-async function createImportedSale(record, productHpp, summary, sheetStats, occurrenceCounts) {
+async function createImportedSale(record, productHpp, summary, sheetStats, occurrenceCounts, businessId) {
   const saleDate = record.saleDate;
   const channel = record.channel;
   const storeName = record.storeName || channel;
@@ -1732,7 +1851,7 @@ async function createImportedSale(record, productHpp, summary, sheetStats, occur
     summary.lastSaleDate = saleDate;
   }
 
-  const baseProductHpp = await ensureImportedProduct(record, productHpp, summary);
+  const baseProductHpp = await ensureImportedProduct(record, productHpp, summary, businessId);
   const totalHpp = record.totalHpp || qty * (record.hpp || baseProductHpp || 0);
   const hpp = record.hpp || (qty > 0 ? Math.round(totalHpp / qty) : 0) || baseProductHpp || 0;
   // A single order number legitimately can repeat the exact same SKU more than once (e.g. an
@@ -1741,8 +1860,8 @@ async function createImportedSale(record, productHpp, summary, sheetStats, occur
   // track how many times this order+SKU has been seen so far in this import and only skip
   // once that many rows already exist in the database.
   const duplicateWhere = orderNumber
-    ? { orderNumber, sku }
-    : { saleDate, channel, storeName, customer, sku, qty, price, subtotal };
+    ? { orderNumber, sku, businessId }
+    : { saleDate, channel, storeName, customer, sku, qty, price, subtotal, businessId };
   const duplicateKey = JSON.stringify(duplicateWhere);
   const occurrence = (occurrenceCounts.get(duplicateKey) || 0) + 1;
   occurrenceCounts.set(duplicateKey, occurrence);
@@ -1754,6 +1873,7 @@ async function createImportedSale(record, productHpp, summary, sheetStats, occur
   }
 
   await Sale.create({
+    businessId,
     saleDate,
     platformId: null,
     channel,
@@ -1773,7 +1893,7 @@ async function createImportedSale(record, productHpp, summary, sheetStats, occur
   return 'created';
 }
 
-async function importSalesWorkbook(buffer, fileName = '') {
+async function importSalesWorkbook(buffer, fileName = '', businessId) {
   const workbook = XLSX.read(buffer, { type: 'buffer' });
   const summary = {
     productsCreated: 0,
@@ -1799,8 +1919,9 @@ async function importSalesWorkbook(buffer, fileName = '') {
       if (!sku || !name) continue;
       productHpp.set(sku, hpp);
       const [product, created] = await Product.findOrCreate({
-        where: { sku },
+        where: { sku, businessId },
         defaults: {
+          businessId,
           sku,
           name,
           variant: variant || '-',
@@ -1929,7 +2050,7 @@ async function importSalesWorkbook(buffer, fileName = '') {
         }
         continue;
       }
-      const result = await createImportedSale(record, productHpp, summary, sheetStats, occurrenceCounts);
+      const result = await createImportedSale(record, productHpp, summary, sheetStats, occurrenceCounts, businessId);
       if (result === 'invalid') {
         sheetFailedRows.push({ rowNumber, reason: 'Channel, toko, tanggal, SKU, atau jumlah tidak lengkap', raw: row || [] });
       }
@@ -2035,7 +2156,7 @@ function buildFailedRowsWorkbook(sheetGroups) {
   return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 }
 
-async function importProductsWorkbook(buffer) {
+async function importProductsWorkbook(buffer, businessId) {
   const workbook = XLSX.read(buffer, { type: 'buffer' });
   const sheetName = workbook.SheetNames.find((name) => normalizeHeader(name) === normalizeHeader('Data Barang')) || workbook.SheetNames[0];
   if (!sheetName) {
@@ -2074,8 +2195,9 @@ async function importProductsWorkbook(buffer) {
     }
 
     const [product, isCreated] = await Product.findOrCreate({
-      where: { sku },
+      where: { sku, businessId },
       defaults: {
+        businessId,
         sku,
         name,
         variant: variant || '-',
@@ -2122,7 +2244,7 @@ function buildMarketingTemplateBuffer() {
   return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 }
 
-async function importMarketingWorkbook(buffer) {
+async function importMarketingWorkbook(buffer, businessId) {
   const workbook = XLSX.read(buffer, { type: 'buffer' });
   let sheetName = null;
   let rows = null;
@@ -2168,7 +2290,7 @@ async function importMarketingWorkbook(buffer) {
     const taxCellBlank = taxCell === undefined || taxCell === null || taxCell === '';
     let taxRate = excelPercent(taxCell);
     if (taxCellBlank && platformStore) {
-      const matchingStore = await Store.findOne({ where: { platformStore } });
+      const matchingStore = await Store.findOne({ where: { platformStore, businessId } });
       if (matchingStore) {
         taxRate = matchingStore.taxRate || 0;
       }
@@ -2184,6 +2306,7 @@ async function importMarketingWorkbook(buffer) {
 
     const duplicate = await MarketingExpense.findOne({
       where: {
+        businessId,
         expenseDate,
         category,
         platformStore,
@@ -2204,6 +2327,7 @@ async function importMarketingWorkbook(buffer) {
     }
 
     await MarketingExpense.create({
+      businessId,
       expenseDate,
       category,
       platformStore,
@@ -2232,30 +2356,24 @@ async function importMarketingWorkbook(buffer) {
   return summary;
 }
 
-async function resetDatabase() {
-  const tables = [
-    'attendance',
-    'attendance_settings',
-    'salary_payments',
-    'shifts',
-    'marketing_expenses',
-    'operational_expenses',
-    'sales',
-    'stores',
-    'products',
-    'users',
-    'platforms',
-  ];
-  await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
-  try {
-    for (const tableName of tables) {
-      await sequelize.query(`TRUNCATE TABLE \`${tableName}\``);
-    }
-  } finally {
-    await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+// Scoped to a single business: deletes only that business's data, never touches the
+// other business, shared reference data (expense categories, holidays), or owner
+// accounts (businessId IS NULL). Owner accounts and reference data survive a reset.
+async function resetDatabase(businessId) {
+  await sequelize.query(
+    'DELETE FROM `attendance` WHERE `user_id` IN (SELECT `id` FROM `users` WHERE `business_id` = :businessId)',
+    { replacements: { businessId } },
+  );
+  await sequelize.query(
+    'DELETE FROM `salary_payments` WHERE `user_id` IN (SELECT `id` FROM `users` WHERE `business_id` = :businessId)',
+    { replacements: { businessId } },
+  );
+  const scopedTables = ['sales', 'marketing_expenses', 'operational_expenses', 'stores', 'products', 'shifts', 'attendance_settings'];
+  for (const tableName of scopedTables) {
+    await sequelize.query(`DELETE FROM \`${tableName}\` WHERE \`business_id\` = :businessId`, { replacements: { businessId } });
   }
-  await createInitialAdmin();
-  await getAttendanceSettings();
+  await sequelize.query('DELETE FROM `users` WHERE `business_id` = :businessId', { replacements: { businessId } });
+  await getAttendanceSettings(businessId);
 }
 
 createSimpleCrudRoutes('shifts', Shift, serializeShift, parseShift, {});
@@ -2282,6 +2400,7 @@ app.get('/api/products/template', ...authRequired, ownerOnly, async (req, res) =
 
 app.post('/api/products/import-excel', ...authRequired, ownerOnly, upload.single('file'), async (req, res) => {
   try {
+    if (!requireConcreteBusiness(req, res)) return;
     if (!req.file) {
       return res.status(400).json({ ok: false, message: 'File Excel wajib diunggah.' });
     }
@@ -2289,7 +2408,7 @@ app.post('/api/products/import-excel', ...authRequired, ownerOnly, upload.single
     if (!['.xlsx', '.xls'].includes(ext)) {
       return res.status(400).json({ ok: false, message: 'Format file harus .xlsx atau .xls.' });
     }
-    const summary = await importProductsWorkbook(req.file.buffer);
+    const summary = await importProductsWorkbook(req.file.buffer, req.businessId);
     return res.json({
       ok: true,
       message: 'Import barang berhasil diproses.',
@@ -2312,7 +2431,7 @@ app.get('/api/sales/template', ...authRequired, salesRecapAccess, async (req, re
 });
 
 
-async function fetchGroupedSales({ search, channel, storeName, from, to, sortBy, sortDir, limit, offset }) {
+async function fetchGroupedSales({ search, channel, storeName, from, to, sortBy, sortDir, limit, offset, businessId }) {
   const conditions = [];
   const replacements = {};
   if (search) {
@@ -2334,6 +2453,10 @@ async function fetchGroupedSales({ search, channel, storeName, from, to, sortBy,
   if (to) {
     conditions.push('`sale_date` <= :to');
     replacements.to = to;
+  }
+  if (businessId !== null && businessId !== undefined) {
+    conditions.push('`business_id` = :businessId');
+    replacements.businessId = businessId;
   }
   const whereSql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const sortColumns = {
@@ -2404,7 +2527,7 @@ app.get('/api/sales', ...authRequired, salesRecapAccess, async (req, res) => {
     const searchText = toText(req.query.search);
     const storeId = toInt(req.query.storeId, null);
     const selectedStore = storeId ? await Store.findByPk(storeId) : null;
-    if (storeId && !selectedStore) {
+    if (storeId && (!selectedStore || !assertOwnedByBusiness(selectedStore, req))) {
       return res.status(400).json({ ok: false, message: 'Toko yang dipilih tidak ditemukan.' });
     }
     const storeName = selectedStore ? selectedStore.name : toText(req.query.storeName);
@@ -2415,7 +2538,7 @@ app.get('/api/sales', ...authRequired, salesRecapAccess, async (req, res) => {
     const sortDir = toText(req.query.sortDir);
 
     if (toText(req.query.grouped) === 'true') {
-      const { rows, total } = await fetchGroupedSales({ search: searchText, channel, storeName, from, to, sortBy, sortDir, limit, offset });
+      const { rows, total } = await fetchGroupedSales({ search: searchText, channel, storeName, from, to, sortBy, sortDir, limit, offset, businessId: req.businessId });
       return res.json({
         ok: true,
         data: rows.map((row) => serializeGroupedSale(row, { includeHpp })),
@@ -2423,7 +2546,7 @@ app.get('/api/sales', ...authRequired, salesRecapAccess, async (req, res) => {
       });
     }
 
-    const where = { ...searchWhere(searchText, ['orderNumber', 'customer', 'sku', 'storeName', 'channel']) };
+    const where = businessWhere(req, searchWhere(searchText, ['orderNumber', 'customer', 'sku', 'storeName', 'channel']));
     if (storeName) {
       where.storeName = storeName;
     }
@@ -2464,7 +2587,7 @@ app.get('/api/sales/detail', ...authRequired, salesRecapAccess, async (req, res)
     if (!orderNumber && !id) {
       return res.status(400).json({ ok: false, message: 'Nomor pesanan atau id wajib diisi.' });
     }
-    const where = orderNumber ? { orderNumber } : { id };
+    const where = businessWhere(req, orderNumber ? { orderNumber } : { id });
     const rows = await Sale.findAll({ where, include: [Platform], order: [['id', 'ASC']] });
     return res.json({ ok: true, data: rows.map((row) => serializeSale(row, { includeHpp })) });
   } catch (error) {
@@ -2474,8 +2597,9 @@ app.get('/api/sales/detail', ...authRequired, salesRecapAccess, async (req, res)
 
 app.post('/api/sales', ...authRequired, salesRecapAccess, async (req, res) => {
   try {
-    const payload = await parseSale(req.body, null);
-    const row = await Sale.create(payload);
+    if (!requireConcreteBusiness(req, res)) return;
+    const payload = await parseSale(req.body, null, req.businessId);
+    const row = await Sale.create({ ...payload, businessId: req.businessId });
     const output = await Sale.findByPk(row.id, { include: [Platform] });
     return res.status(201).json({ ok: true, data: serializeSale(output, { includeHpp: req.user.role === 'owner' }) });
   } catch (error) {
@@ -2485,6 +2609,7 @@ app.post('/api/sales', ...authRequired, salesRecapAccess, async (req, res) => {
 
 app.post('/api/sales/import-excel', ...authRequired, salesRecapAccess, upload.single('file'), async (req, res) => {
   try {
+    if (!requireConcreteBusiness(req, res)) return;
     if (!req.file) {
       return res.status(400).json({ ok: false, message: 'File Excel wajib diunggah.' });
     }
@@ -2492,7 +2617,7 @@ app.post('/api/sales/import-excel', ...authRequired, salesRecapAccess, upload.si
     if (!['.xlsx', '.xls'].includes(ext)) {
       return res.status(400).json({ ok: false, message: 'Format file harus .xlsx atau .xls.' });
     }
-    const summary = await importSalesWorkbook(req.file.buffer, req.file.originalname);
+    const summary = await importSalesWorkbook(req.file.buffer, req.file.originalname, req.businessId);
     return res.json({
       ok: true,
       message: 'Import penjualan berhasil diproses.',
@@ -2506,10 +2631,10 @@ app.post('/api/sales/import-excel', ...authRequired, salesRecapAccess, upload.si
 app.put('/api/sales/:id', ...authRequired, salesRecapAccess, async (req, res) => {
   try {
     const row = await Sale.findByPk(req.params.id);
-    if (!row) {
+    if (!row || !assertOwnedByBusiness(row, req)) {
       return res.status(404).json({ ok: false, message: 'Data tidak ditemukan.' });
     }
-    const payload = await parseSale(req.body, row);
+    const payload = await parseSale(req.body, row, row.businessId);
     await row.update(payload);
     const output = await Sale.findByPk(row.id, { include: [Platform] });
     return res.json({ ok: true, data: serializeSale(output, { includeHpp: req.user.role === 'owner' }) });
@@ -2521,7 +2646,7 @@ app.put('/api/sales/:id', ...authRequired, salesRecapAccess, async (req, res) =>
 app.delete('/api/sales/:id', ...authRequired, salesRecapAccess, async (req, res) => {
   try {
     const row = await Sale.findByPk(req.params.id);
-    if (!row) {
+    if (!row || !assertOwnedByBusiness(row, req)) {
       return res.status(404).json({ ok: false, message: 'Data tidak ditemukan.' });
     }
     await row.destroy();
@@ -2541,11 +2666,11 @@ app.post('/api/sales/bulk-delete', ...authRequired, salesRecapAccess, async (req
     for (const item of items) {
       const orderNumber = toText(item?.orderNumber);
       if (orderNumber) {
-        deleted += await Sale.destroy({ where: { orderNumber } });
+        deleted += await Sale.destroy({ where: businessWhere(req, { orderNumber }) });
       } else {
         const id = toInt(item?.id, null);
         if (id !== null) {
-          deleted += await Sale.destroy({ where: { id } });
+          deleted += await Sale.destroy({ where: businessWhere(req, { id }) });
         }
       }
     }
@@ -2570,7 +2695,7 @@ createSimpleCrudRoutes('expenses/marketing', MarketingExpense, serializeMarketin
 app.get('/api/expense-categories', ...authRequired, async (req, res) => {
   try {
     const kind = toText(req.query.kind);
-    const where = kind ? { kind } : {};
+    const where = businessWhere(req, kind ? { kind } : {});
     const rows = await ExpenseCategory.findAll({ where, order: [['name', 'ASC']] });
     return res.json({ ok: true, data: rows.map(serializeExpenseCategory) });
   } catch (error) {
@@ -2580,12 +2705,16 @@ app.get('/api/expense-categories', ...authRequired, async (req, res) => {
 
 app.post('/api/expense-categories', ...authRequired, ownerLeaderAdmin, async (req, res) => {
   try {
+    if (!requireConcreteBusiness(req, res)) return;
     const name = toText(req.body.name);
     const kind = toText(req.body.kind);
     if (!name || !['operasional', 'marketing'].includes(kind)) {
       return res.status(400).json({ ok: false, message: 'Nama dan jenis kategori wajib diisi.' });
     }
-    const [row] = await ExpenseCategory.findOrCreate({ where: { name, kind }, defaults: { name, kind } });
+    const [row] = await ExpenseCategory.findOrCreate({
+      where: { name, kind, businessId: req.businessId },
+      defaults: { name, kind, businessId: req.businessId },
+    });
     return res.status(201).json({ ok: true, data: serializeExpenseCategory(row) });
   } catch (error) {
     return res.status(400).json({ ok: false, message: error.message || 'Gagal menambah kategori.' });
@@ -2605,6 +2734,7 @@ app.get('/api/expenses/marketing/template', ...authRequired, ownerLeaderAdmin, a
 
 app.post('/api/expenses/marketing/import-excel', ...authRequired, ownerLeaderAdmin, upload.single('file'), async (req, res) => {
   try {
+    if (!requireConcreteBusiness(req, res)) return;
     if (!req.file) {
       return res.status(400).json({ ok: false, message: 'File Excel wajib diunggah.' });
     }
@@ -2612,7 +2742,7 @@ app.post('/api/expenses/marketing/import-excel', ...authRequired, ownerLeaderAdm
     if (!['.xlsx', '.xls'].includes(ext)) {
       return res.status(400).json({ ok: false, message: 'Format file harus .xlsx atau .xls.' });
     }
-    const summary = await importMarketingWorkbook(req.file.buffer);
+    const summary = await importMarketingWorkbook(req.file.buffer, req.businessId);
     return res.json({
       ok: true,
       message: 'Import beban marketing berhasil diproses.',
@@ -2625,6 +2755,7 @@ app.post('/api/expenses/marketing/import-excel', ...authRequired, ownerLeaderAdm
 
 app.post('/api/admin/reset-database', ...authRequired, ownerOnly, async (req, res) => {
   try {
+    if (!requireConcreteBusiness(req, res)) return;
     const password = toText(req.body.password);
     if (!password) {
       return res.status(400).json({ ok: false, message: 'Password admin wajib diisi.' });
@@ -2633,18 +2764,67 @@ app.post('/api/admin/reset-database', ...authRequired, ownerOnly, async (req, re
     if (!valid) {
       return res.status(401).json({ ok: false, message: 'Password admin tidak sesuai.' });
     }
-    await resetDatabase();
+    await resetDatabase(req.businessId);
     return res.json({
       ok: true,
-      message: 'Database berhasil direset. Silakan masuk kembali dengan akun admin awal.',
+      message: 'Data bisnis yang sedang aktif berhasil direset.',
     });
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Gagal mereset database.' });
   }
 });
 
+async function availableBusinessesFor(user) {
+  if (user.role === 'owner') {
+    const rows = await Business.findAll({ where: { active: true }, order: [['id', 'ASC']] });
+    return rows.map(serializeBusiness);
+  }
+  if (!user.businessId) return [];
+  const row = await Business.findByPk(user.businessId);
+  return row ? [serializeBusiness(row)] : [];
+}
+
+app.get('/api/businesses', ...authRequired, async (req, res) => {
+  try {
+    const data = await availableBusinessesFor(req.user);
+    return res.json({ ok: true, data });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Gagal memuat daftar bisnis.' });
+  }
+});
+
+app.post('/api/businesses', ...authRequired, ownerOnly, async (req, res) => {
+  try {
+    const name = toText(req.body.name);
+    const slug = toText(req.body.slug) || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (!name || !slug) {
+      return res.status(400).json({ ok: false, message: 'Nama bisnis wajib diisi.' });
+    }
+    const row = await Business.create({ name, slug, active: true });
+    return res.status(201).json({ ok: true, data: serializeBusiness(row) });
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message || 'Gagal menambah bisnis.' });
+  }
+});
+
+app.put('/api/businesses/:id', ...authRequired, ownerOnly, async (req, res) => {
+  try {
+    const row = await Business.findByPk(req.params.id);
+    if (!row) {
+      return res.status(404).json({ ok: false, message: 'Bisnis tidak ditemukan.' });
+    }
+    if (req.body.name !== undefined) row.name = toText(req.body.name);
+    if (req.body.active !== undefined) row.active = Boolean(req.body.active);
+    await row.save();
+    return res.json({ ok: true, data: serializeBusiness(row) });
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message || 'Gagal memperbarui bisnis.' });
+  }
+});
+
 app.get('/api/auth/me', ...authRequired, async (req, res) => {
-  return res.json({ ok: true, data: serializeUser(req.user) });
+  const availableBusinesses = await availableBusinessesFor(req.user);
+  return res.json({ ok: true, data: serializeUser(req.user), availableBusinesses });
 });
 
 app.post('/api/auth/login', async (req, res) => {
@@ -2665,10 +2845,12 @@ app.post('/api/auth/login', async (req, res) => {
     user.lastLoginAt = now();
     await user.save();
     const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '7d' });
+    const availableBusinesses = await availableBusinessesFor(user);
     return res.json({
       ok: true,
       token,
       data: serializeUser(user),
+      availableBusinesses,
       message: 'Masuk berhasil.',
     });
   } catch (error) {
@@ -2678,7 +2860,7 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/users', ...authRequired, ownerOnly, async (req, res) => {
   try {
-    const where = searchWhere(req.query.search, ['fullName', 'username', 'jobTitle']);
+    const where = businessWhere(req, searchWhere(req.query.search, ['fullName', 'username', 'jobTitle']));
     const rows = await User.findAll({ where, order: [['createdAt', 'DESC']], include: [Shift] });
     return res.json({ ok: true, data: rows.map(serializeUser) });
   } catch (error) {
@@ -2694,16 +2876,25 @@ app.post('/api/users', ...authRequired, ownerOnly, async (req, res) => {
     if (!username || !fullName) {
       return res.status(400).json({ ok: false, message: 'Username dan nama lengkap wajib diisi.' });
     }
+    const role = ROLES.includes(req.body.role) ? req.body.role : 'karyawan';
+    let businessId = null;
+    if (role !== 'owner') {
+      businessId = req.body.businessId !== undefined ? toInt(req.body.businessId, null) : req.businessId;
+      if (!businessId) {
+        return res.status(400).json({ ok: false, message: 'Bisnis wajib dipilih untuk role selain owner.' });
+      }
+    }
     const exists = await User.findOne({ where: { username } });
     if (exists) {
       return res.status(409).json({ ok: false, message: 'Username sudah dipakai.' });
     }
     const passwordHash = await bcrypt.hash(password || '12345678', 10);
     const row = await User.create({
+      businessId,
       username,
       passwordHash,
       fullName,
-      role: ROLES.includes(req.body.role) ? req.body.role : 'karyawan',
+      role,
       jobTitle: toText(req.body.jobTitle),
       workShift: toText(req.body.workShift),
       phone: toText(req.body.phone),
@@ -2723,7 +2914,7 @@ app.post('/api/users', ...authRequired, ownerOnly, async (req, res) => {
 app.put('/api/users/:id', ...authRequired, ownerOnly, async (req, res) => {
   try {
     const row = await User.findByPk(req.params.id);
-    if (!row) {
+    if (!row || !assertOwnedByBusiness(row, req)) {
       return res.status(404).json({ ok: false, message: 'Data tidak ditemukan.' });
     }
     if (req.body.username) {
@@ -2743,6 +2934,11 @@ app.put('/api/users/:id', ...authRequired, ownerOnly, async (req, res) => {
     }
     row.fullName = toText(req.body.fullName || row.fullName);
     row.role = ROLES.includes(req.body.role) ? req.body.role : row.role;
+    if (row.role === 'owner') {
+      row.businessId = null;
+    } else if (req.body.businessId !== undefined) {
+      row.businessId = toInt(req.body.businessId, row.businessId);
+    }
     row.jobTitle = toText(req.body.jobTitle);
     row.workShift = toText(req.body.workShift);
     row.phone = toText(req.body.phone);
@@ -2767,7 +2963,7 @@ app.delete('/api/users/:id', ...authRequired, ownerOnly, async (req, res) => {
       return res.status(400).json({ ok: false, message: 'Akun sendiri tidak bisa dihapus.' });
     }
     const row = await User.findByPk(req.params.id);
-    if (!row) {
+    if (!row || !assertOwnedByBusiness(row, req)) {
       return res.status(404).json({ ok: false, message: 'Data tidak ditemukan.' });
     }
     await row.destroy();
@@ -2785,7 +2981,7 @@ app.post('/api/users/bulk-delete', ...authRequired, ownerOnly, async (req, res) 
     if (!ids.length) {
       return res.status(400).json({ ok: false, message: 'Pilih minimal satu karyawan untuk dihapus.' });
     }
-    const deleted = await User.destroy({ where: { id: { [Op.in]: ids } } });
+    const deleted = await User.destroy({ where: businessWhere(req, { id: { [Op.in]: ids } }) });
     return res.json({ ok: true, message: `${deleted} karyawan berhasil dihapus.`, data: { deleted } });
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Gagal menghapus karyawan terpilih.' });
@@ -2866,7 +3062,7 @@ app.get('/api/attendance', ...authRequired, ownerOrLeader, async (req, res) => {
     }
     const rows = await Attendance.findAll({
       where,
-      include: [{ model: User }],
+      include: [{ model: User, where: businessWhere(req) }],
       order: [['workDate', 'DESC'], ['createdAt', 'DESC']],
       limit: 400,
       subQuery: false,
@@ -2879,7 +3075,8 @@ app.get('/api/attendance', ...authRequired, ownerOrLeader, async (req, res) => {
 
 app.get('/api/attendance/settings', ...authRequired, async (req, res) => {
   try {
-    const settings = await getAttendanceSettings();
+    if (!requireConcreteBusiness(req, res)) return;
+    const settings = await getAttendanceSettings(req.businessId);
     return res.json({ ok: true, data: serializeAttendanceSettings(settings) });
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Gagal memuat pengaturan absensi.' });
@@ -2888,6 +3085,7 @@ app.get('/api/attendance/settings', ...authRequired, async (req, res) => {
 
 app.put('/api/attendance/settings', ...authRequired, ownerOnly, async (req, res) => {
   try {
+    if (!requireConcreteBusiness(req, res)) return;
     const checkInStart = toText(req.body.checkInStart);
     const checkInDeadline = toText(req.body.checkInDeadline);
     const checkOutStart = toText(req.body.checkOutStart);
@@ -2913,7 +3111,7 @@ app.put('/api/attendance/settings', ...authRequired, ownerOnly, async (req, res)
     const hasLongitude = req.body.longitude !== undefined && req.body.longitude !== null && req.body.longitude !== '';
     const latitude = hasLatitude ? toFloat(req.body.latitude, null) : null;
     const longitude = hasLongitude ? toFloat(req.body.longitude, null) : null;
-    const settings = await getAttendanceSettings();
+    const settings = await getAttendanceSettings(req.businessId);
     const willHaveCoordinates = hasLatitude && hasLongitude ? true : (settings.latitude !== null && settings.longitude !== null);
     if (radiusEnabled && !willHaveCoordinates) {
       return res.status(400).json({ ok: false, message: 'Set lokasi toko dengan "Gunakan Lokasi Saat Ini" sebelum mengaktifkan radius.' });
@@ -2975,7 +3173,7 @@ const ATTENDANCE_STATUSES = ['hadir', 'izin', 'sakit', 'cuti'];
 app.get('/api/employees/roster', ...authRequired, ownerOrLeader, async (req, res) => {
   try {
     const rows = await User.findAll({
-      where: { active: true },
+      where: businessWhere(req, { active: true }),
       attributes: ['id', 'fullName'],
       order: [['fullName', 'ASC']],
     });
@@ -2997,7 +3195,7 @@ app.post('/api/attendance', ...authRequired, ownerOrLeader, async (req, res) => 
       return res.status(400).json({ ok: false, message: 'Status tidak valid.' });
     }
     const target = await User.findByPk(userId);
-    if (!target) {
+    if (!target || !assertOwnedByBusiness(target, req)) {
       return res.status(404).json({ ok: false, message: 'Karyawan tidak ditemukan.' });
     }
     let row = await Attendance.findOne({ where: { userId, workDate } });
@@ -3024,7 +3222,7 @@ app.post('/api/attendance', ...authRequired, ownerOrLeader, async (req, res) => 
 app.put('/api/attendance/:id', ...authRequired, ownerOrLeader, async (req, res) => {
   try {
     const row = await Attendance.findByPk(req.params.id, { include: [{ model: User }] });
-    if (!row) {
+    if (!row || !assertOwnedByBusiness(row.User, req)) {
       return res.status(404).json({ ok: false, message: 'Data absensi tidak ditemukan.' });
     }
     if (req.body.status !== undefined) {
@@ -3049,8 +3247,8 @@ app.put('/api/attendance/:id', ...authRequired, ownerOrLeader, async (req, res) 
 
 app.delete('/api/attendance/:id', ...authRequired, ownerOrLeader, async (req, res) => {
   try {
-    const row = await Attendance.findByPk(req.params.id);
-    if (!row) {
+    const row = await Attendance.findByPk(req.params.id, { include: [{ model: User }] });
+    if (!row || !assertOwnedByBusiness(row.User, req)) {
       return res.status(404).json({ ok: false, message: 'Data tidak ditemukan.' });
     }
     await row.destroy();
@@ -3066,7 +3264,13 @@ app.post('/api/attendance/bulk-delete', ...authRequired, ownerOrLeader, async (r
     if (!ids.length) {
       return res.status(400).json({ ok: false, message: 'Pilih minimal satu data absensi untuk dihapus.' });
     }
-    const deleted = await Attendance.destroy({ where: { id: { [Op.in]: ids } } });
+    const scopedRows = await Attendance.findAll({
+      where: { id: { [Op.in]: ids } },
+      include: [{ model: User, where: businessWhere(req) }],
+      attributes: ['id'],
+    });
+    const scopedIds = scopedRows.map((row) => row.id);
+    const deleted = scopedIds.length ? await Attendance.destroy({ where: { id: { [Op.in]: scopedIds } } }) : 0;
     return res.json({ ok: true, message: `${deleted} data absensi berhasil dihapus.`, data: { deleted } });
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Gagal menghapus data absensi terpilih.' });
@@ -3083,11 +3287,11 @@ app.post('/api/attendance/check-in', ...authRequired, async (req, res) => {
       return res.status(400).json({ ok: false, message: 'Foto absensi wajib diambil dari kamera terlebih dahulu.' });
     }
     const locationName = toText(req.body.locationName);
-    const settings = await getAttendanceSettings();
+    const settings = await getAttendanceSettings(req.businessId);
     let shiftWindow = resolveShiftWindow(req.user, settings);
     if (req.body.shiftId) {
       const overrideShift = await Shift.findByPk(toInt(req.body.shiftId, null));
-      if (overrideShift) {
+      if (overrideShift && assertOwnedByBusiness(overrideShift, req)) {
         shiftWindow = {
           checkInDeadline: overrideShift.checkInDeadline,
           lateToleranceMinutes: overrideShift.lateToleranceMinutes,
@@ -3171,14 +3375,15 @@ app.post('/api/attendance/check-in', ...authRequired, async (req, res) => {
   }
 });
 
-function salaryScopeWhere(requester) {
+function salaryScopeWhere(req) {
+  const requester = req.user;
   if (requester.role === 'karyawan' || requester.role === 'admin') {
     return { id: requester.id, active: true };
   }
   if (requester.role === 'leader') {
-    return { role: { [Op.ne]: 'owner' }, active: true };
+    return businessWhere(req, { role: { [Op.ne]: 'owner' }, active: true });
   }
-  return { active: true };
+  return businessWhere(req, { active: true });
 }
 
 async function computeSalaryReport(weekStart, scopeWhere) {
@@ -3210,7 +3415,7 @@ async function computeSalaryReport(weekStart, scopeWhere) {
 
 app.get('/api/reports/salary', ...authRequired, async (req, res) => {
   try {
-    const scopeWhere = salaryScopeWhere(req.user);
+    const scopeWhere = salaryScopeWhere(req);
     if (!scopeWhere) {
       return res.status(403).json({ ok: false, message: 'Akses laporan gaji tidak tersedia untuk role Anda.' });
     }
@@ -3229,7 +3434,7 @@ app.post('/api/reports/salary/adjust', ...authRequired, ownerOrLeader, async (re
       return res.status(400).json({ ok: false, message: 'Karyawan tidak valid.' });
     }
     const target = await User.findByPk(userId);
-    if (!target) {
+    if (!target || !assertOwnedByBusiness(target, req)) {
       return res.status(404).json({ ok: false, message: 'Karyawan tidak ditemukan.' });
     }
     if (target.role === 'owner' && req.user.role !== 'owner') {
@@ -3257,7 +3462,7 @@ app.post('/api/reports/salary/mark-paid', ...authRequired, ownerOrLeader, async 
       return res.status(400).json({ ok: false, message: 'Karyawan tidak valid.' });
     }
     const target = await User.findByPk(userId);
-    if (!target) {
+    if (!target || !assertOwnedByBusiness(target, req)) {
       return res.status(404).json({ ok: false, message: 'Karyawan tidak ditemukan.' });
     }
     if (target.role === 'owner' && req.user.role !== 'owner') {
@@ -3282,7 +3487,7 @@ app.post('/api/reports/salary/mark-all-paid', ...authRequired, ownerOrLeader, as
   try {
     const weekStart = sundayOfWeek(toText(req.body.weekStart) || jakartaDate());
     const paid = req.body.paid === undefined ? true : Boolean(req.body.paid);
-    const scopeWhere = salaryScopeWhere(req.user) || { active: true };
+    const scopeWhere = salaryScopeWhere(req) || { active: true };
     const users = await User.findAll({ where: scopeWhere });
     for (const user of users) {
       let payment = await SalaryPayment.findOne({ where: { userId: user.id, weekStart } });
@@ -3303,7 +3508,7 @@ app.get('/api/reports/profit', ...authRequired, ownerOnly, async (req, res) => {
   try {
     const from = toText(req.query.from);
     const to = toText(req.query.to);
-    const data = await buildProfitSummary(from, to);
+    const data = await buildProfitSummary(from, to, {}, req.businessId);
     return res.json({ ok: true, data });
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Gagal memuat laba rugi.' });
@@ -3443,7 +3648,7 @@ app.get('/api/reports/profit/pdf', ...authRequired, ownerOnly, async (req, res) 
   try {
     const from = toText(req.query.from);
     const to = toText(req.query.to);
-    const data = await buildProfitSummary(from, to);
+    const data = await buildProfitSummary(from, to, {}, req.businessId);
     const buffer = await buildProfitReportPdf(data);
     res.setHeader('Content-Disposition', 'attachment; filename="laba_rugi.pdf"');
     res.setHeader('Content-Type', 'application/pdf');
@@ -3459,13 +3664,13 @@ app.get('/api/dashboard', ...authRequired, async (req, res) => {
     const to = toText(req.query.to);
     const storeId = toInt(req.query.storeId, null);
     const selectedStore = storeId ? await Store.findByPk(storeId) : null;
-    if (storeId && !selectedStore) {
+    if (storeId && (!selectedStore || !assertOwnedByBusiness(selectedStore, req))) {
       return res.status(400).json({ ok: false, message: 'Toko yang dipilih tidak ditemukan.' });
     }
     const platform = selectedStore ? selectedStore.platform : toText(req.query.platform);
     const storeName = selectedStore ? selectedStore.name : toText(req.query.storeName);
     const sku = toText(req.query.sku);
-    const data = await buildDashboard(from, to, { platform, storeName, sku });
+    const data = await buildDashboard(from, to, { platform, storeName, sku, businessId: req.businessId });
     return res.json({ ok: true, data });
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Gagal memuat dashboard.' });
@@ -3483,14 +3688,54 @@ app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-async function seedExpenseCategories() {
+async function seedExpenseCategories(businessId) {
   const seeds = [
     ...DEFAULT_OPERATIONAL_ORDER.map((name) => ({ name, kind: 'operasional' })),
     ...DEFAULT_MARKETING_ORDER.map((name) => ({ name, kind: 'marketing' })),
   ];
   for (const seed of seeds) {
-    await ExpenseCategory.findOrCreate({ where: seed, defaults: seed });
+    await ExpenseCategory.findOrCreate({ where: { ...seed, businessId }, defaults: { ...seed, businessId } });
   }
+}
+
+// One-off idempotent backfill (same pattern as migrateOwnerRole) run on every boot: seeds the
+// two Business rows and assigns any pre-existing (pre-multi-business) data to "SDS Headwear",
+// since that's the business all data belonged to before this feature existed. Never touches
+// owner accounts (businessId stays NULL = unrestricted access to all businesses).
+async function migrateBusinessScoping() {
+  const [headwear] = await Business.findOrCreate({
+    where: { slug: 'sds-headwear' },
+    defaults: { name: 'SDS Headwear', slug: 'sds-headwear', active: true },
+  });
+  const [fashion] = await Business.findOrCreate({
+    where: { slug: 'sds-fashion' },
+    defaults: { name: 'SDS Fashion', slug: 'sds-fashion', active: true },
+  });
+
+  const scopedTables = ['stores', 'products', 'sales', 'operational_expenses', 'marketing_expenses', 'expense_categories', 'shifts', 'attendance_settings'];
+  for (const tableName of scopedTables) {
+    await sequelize.query(
+      `UPDATE \`${tableName}\` SET \`business_id\` = :businessId WHERE \`business_id\` IS NULL`,
+      { replacements: { businessId: headwear.id } },
+    );
+  }
+  await sequelize.query(
+    "UPDATE `users` SET `business_id` = :businessId WHERE `business_id` IS NULL AND `role` != 'owner'",
+    { replacements: { businessId: headwear.id } },
+  );
+
+  for (const tableName of scopedTables) {
+    const rows = await sequelize.query(
+      `SELECT COUNT(*) AS total FROM \`${tableName}\` WHERE \`business_id\` IS NULL`,
+      { type: sequelize.QueryTypes.SELECT },
+    );
+    const remaining = toInt(rows[0]?.total, 0);
+    if (remaining > 0) {
+      console.warn(`[migrateBusinessScoping] ${tableName}: ${remaining} baris masih business_id NULL setelah backfill.`);
+    }
+  }
+
+  return { headwearId: headwear.id, fashionId: fashion.id };
 }
 
 async function bootstrap() {
@@ -3499,8 +3744,11 @@ async function bootstrap() {
   await sequelize.sync({ alter: true });
   await migrateOwnerRole();
   await createInitialAdmin();
-  await getAttendanceSettings();
-  await seedExpenseCategories();
+  const { headwearId, fashionId } = await migrateBusinessScoping();
+  await getAttendanceSettings(headwearId);
+  await getAttendanceSettings(fashionId);
+  await seedExpenseCategories(headwearId);
+  await seedExpenseCategories(fashionId);
 }
 
 bootstrap()
