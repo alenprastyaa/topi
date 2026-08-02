@@ -3699,17 +3699,17 @@ async function seedExpenseCategories(businessId) {
 }
 
 // One-off idempotent backfill (same pattern as migrateOwnerRole) run on every boot: seeds the
-// two Business rows and assigns any pre-existing (pre-multi-business) data to "SDS Headwear",
+// two Business rows and assigns any pre-existing (pre-multi-business) data to "SDS Hatpro",
 // since that's the business all data belonged to before this feature existed. Never touches
 // owner accounts (businessId stays NULL = unrestricted access to all businesses).
 async function migrateBusinessScoping() {
   const [headwear] = await Business.findOrCreate({
     where: { slug: 'sds-headwear' },
-    defaults: { name: 'SDS Headwear', slug: 'sds-headwear', active: true },
+    defaults: { name: 'SDS Hatpro', slug: 'sds-headwear', active: true },
   });
   const [fashion] = await Business.findOrCreate({
     where: { slug: 'sds-fashion' },
-    defaults: { name: 'SDS Fashion', slug: 'sds-fashion', active: true },
+    defaults: { name: 'SDS Hivvy', slug: 'sds-fashion', active: true },
   });
 
   const scopedTables = ['stores', 'products', 'sales', 'operational_expenses', 'marketing_expenses', 'expense_categories', 'shifts', 'attendance_settings'];
