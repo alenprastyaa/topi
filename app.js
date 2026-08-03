@@ -3741,7 +3741,11 @@ async function migrateBusinessScoping() {
 async function bootstrap() {
   await ensureDatabase();
   await sequelize.authenticate();
-  await sequelize.sync({ alter: true });
+  // alter: true menambah unique index duplikat tiap boot (slug_2, slug_3, ...) sampai
+  // menabrak limit 64 key MySQL dan bikin bootstrap gagal permanen.
+  // Default sekarang sync() biasa; aktifkan alter hanya saat deploy yang mengubah skema:
+  //   SEQUELIZE_ALTER=1 pm2 restart topi --update-env
+  await sequelize.sync(process.env.SEQUELIZE_ALTER === '1' ? { alter: true } : undefined);
   await migrateOwnerRole();
   await createInitialAdmin();
   const { headwearId, fashionId } = await migrateBusinessScoping();
