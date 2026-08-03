@@ -19,7 +19,11 @@ const DB_HOST = process.env.MYSQL_HOST || '127.0.0.1';
 const DB_PORT = Number(process.env.MYSQL_PORT || 3306);
 const DB_USER = process.env.MYSQL_USER || 'root';
 const DB_PASSWORD = process.env.MYSQL_PASSWORD || 'alen';
-const DB_NAME = 'topi';
+// Database khusus aplikasi ini. Sebelumnya bernama 'topi', tapi database itu
+// dipakai bersama project lain (app builder project_196) yang menjalankan
+// sequelize.sync({ alter: true }) dengan model berbeda, sehingga kolom
+// shifts.business_id berulang kali di-DROP dan bikin bootstrap gagal + login 500.
+const DB_NAME = process.env.MYSQL_DATABASE || 'topi_pos';
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
