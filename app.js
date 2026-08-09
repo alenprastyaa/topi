@@ -1815,25 +1815,10 @@ const detectSaleTemplate = (headers) => {
   return '';
 };
 
-async function ensureImportedProduct(record, productHpp, summary, businessId) {
-  if (!record.sku) return 0;
-  const existing = await Product.findOne({ where: { sku: record.sku, businessId } });
-  if (existing) {
-    return existing.hpp || 0;
-  }
-  const hpp = productHpp.get(record.sku) || record.hpp || 0;
-  await Product.create({
-    businessId,
-    sku: record.sku,
-    name: record.productName || record.sku,
-    variant: record.variant || '-',
-    hpp,
-  });
-  summary.productsCreated += 1;
-  return hpp;
-}
-
-async function createImportedSale(record, productHpp, summary, sheetStats, occurrenceCounts, businessId) {
+// Normalizes a raw parsed row into its final field values and flags rows that are
+// missing required fields. Pure/synchronous so it can run for every row up front,
+// before any database round trip.
+function normalizeImportedSaleRecord(record, summary) {
   const saleDate = record.saleDate;
   const channel = record.channel;
   const storeName = record.storeName || channel;
@@ -1855,31 +1840,8 @@ async function createImportedSale(record, productHpp, summary, sheetStats, occur
     summary.lastSaleDate = saleDate;
   }
 
-  const baseProductHpp = await ensureImportedProduct(record, productHpp, summary, businessId);
-  const totalHpp = record.totalHpp || qty * (record.hpp || baseProductHpp || 0);
-  const hpp = record.hpp || (qty > 0 ? Math.round(totalHpp / qty) : 0) || baseProductHpp || 0;
-  // A single order number legitimately can repeat the exact same SKU more than once (e.g. an
-  // embroidery add-on fee line per item). A plain existence check can't tell "already
-  // imported before" apart from "another genuinely identical line in this order", so we
-  // track how many times this order+SKU has been seen so far in this import and only skip
-  // once that many rows already exist in the database.
-  const duplicateWhere = orderNumber
-    ? { orderNumber, sku, businessId }
-    : { saleDate, channel, storeName, customer, sku, qty, price, subtotal, businessId };
-  const duplicateKey = JSON.stringify(duplicateWhere);
-  const occurrence = (occurrenceCounts.get(duplicateKey) || 0) + 1;
-  occurrenceCounts.set(duplicateKey, occurrence);
-  const existingCount = await Sale.count({ where: duplicateWhere });
-  if (existingCount >= occurrence) {
-    summary.salesSkipped += 1;
-    sheetStats.skipped += 1;
-    return 'duplicate';
-  }
-
-  await Sale.create({
-    businessId,
+  return {
     saleDate,
-    platformId: null,
     channel,
     storeName,
     orderNumber,
@@ -1889,12 +1851,81 @@ async function createImportedSale(record, productHpp, summary, sheetStats, occur
     price,
     subtotal,
     adminFee,
-    hpp,
-    totalHpp: totalHpp || qty * hpp,
+    hpp: record.hpp,
+    totalHpp: record.totalHpp,
+    productName: record.productName,
+    variant: record.variant,
+  };
+}
+
+// Ensures every SKU referenced by `records` has a Product row, in at most two queries
+// (one lookup, one bulk insert) instead of one lookup+insert pair per row. Mirrors the
+// previous per-row behavior: a SKU already known to the "Data Barang" sheet or already
+// in the database keeps its existing hpp; a genuinely new SKU is created once, using the
+// first row that mentions it, even if that SKU repeats across many rows.
+async function ensureImportedProducts(records, productHpp, summary, businessId, transaction) {
+  const hppBySku = new Map();
+  const firstRecordBySku = new Map();
+  for (const record of records) {
+    if (record.sku && !firstRecordBySku.has(record.sku)) {
+      firstRecordBySku.set(record.sku, record);
+    }
+  }
+  const skusNeeded = new Set(firstRecordBySku.keys());
+  if (!skusNeeded.size) return hppBySku;
+
+  const existing = await Product.findAll({
+    where: { sku: { [Op.in]: Array.from(skusNeeded) }, businessId },
+    transaction,
   });
-  summary.salesCreated += 1;
-  sheetStats.created += 1;
-  return 'created';
+  for (const product of existing) {
+    hppBySku.set(product.sku, product.hpp || 0);
+    skusNeeded.delete(product.sku);
+  }
+
+  if (skusNeeded.size) {
+    const toCreate = [];
+    for (const sku of skusNeeded) {
+      const record = firstRecordBySku.get(sku);
+      const hpp = productHpp.get(sku) || record.hpp || 0;
+      hppBySku.set(sku, hpp);
+      toCreate.push({
+        businessId,
+        sku,
+        name: record.productName || sku,
+        variant: record.variant || '-',
+        hpp,
+      });
+    }
+    await Product.bulkCreate(toCreate, { transaction });
+    summary.productsCreated += toCreate.length;
+  }
+  return hppBySku;
+}
+
+// A single order number legitimately can repeat the exact same SKU more than once (e.g. an
+// embroidery add-on fee line per item). A plain existence check can't tell "already
+// imported before" apart from "another genuinely identical line in this order", so we
+// track how many times this order+SKU has been seen so far in this import and only skip
+// once that many rows already exist in the database. Fetching those pre-import counts
+// once up front (rather than re-querying after every row) gives identical create/skip
+// decisions, because the comparison only ever depends on the count of matching rows that
+// existed *before* this import started, not on rows this same import has inserted so far.
+async function fetchExistingOrderSkuCounts(records, businessId, transaction) {
+  const orderNumbers = Array.from(new Set(records.map((r) => r.orderNumber).filter(Boolean)));
+  const counts = new Map();
+  if (!orderNumbers.length) return counts;
+  const rows = await Sale.findAll({
+    attributes: ['orderNumber', 'sku', [sequelize.fn('COUNT', sequelize.col('id')), 'cnt']],
+    where: { businessId, orderNumber: { [Op.in]: orderNumbers } },
+    group: ['orderNumber', 'sku'],
+    raw: true,
+    transaction,
+  });
+  for (const row of rows) {
+    counts.set(JSON.stringify([row.orderNumber, row.sku]), Number(row.cnt) || 0);
+  }
+  return counts;
 }
 
 async function importSalesWorkbook(buffer, fileName = '', businessId) {
@@ -1908,170 +1939,257 @@ async function importSalesWorkbook(buffer, fileName = '', businessId) {
     lastSaleDate: '',
     sheets: [],
   };
-  const occurrenceCounts = new Map();
   const sheetFailureGroups = [];
 
-  const productSheet = workbook.Sheets['Data Barang'];
-  const productHpp = new Map();
-  if (productSheet) {
-    const rows = XLSX.utils.sheet_to_json(productSheet, { header: 1, raw: true, defval: null });
-    for (const row of rows.slice(1)) {
-      const sku = excelText(row[0]);
-      const name = excelText(row[1]);
-      const variant = excelText(row[2]);
-      const hpp = excelNumber(row[3]);
-      if (!sku || !name) continue;
-      productHpp.set(sku, hpp);
-      const [product, created] = await Product.findOrCreate({
-        where: { sku, businessId },
-        defaults: {
-          businessId,
-          sku,
-          name,
-          variant: variant || '-',
-          hpp,
-        },
-      });
-      if (created) {
-        summary.productsCreated += 1;
-      } else {
-        await product.update({
-          name,
-          variant: variant || product.variant || '-',
-          hpp,
+  // The whole import runs inside one transaction: previously each parsed row was written
+  // with its own Product/Sale queries as soon as it was parsed, so a failure partway
+  // through (e.g. while building the failed-rows report) left the rows seen so far
+  // committed even though the request ultimately responded with an error. Wrapping the
+  // writes in a transaction makes the import all-or-nothing, so a reported failure can no
+  // longer leave data behind that only shows up after a refresh.
+  await sequelize.transaction(async (t) => {
+    const productSheet = workbook.Sheets['Data Barang'];
+    const productHpp = new Map();
+    if (productSheet) {
+      const rows = XLSX.utils.sheet_to_json(productSheet, { header: 1, raw: true, defval: null });
+      for (const row of rows.slice(1)) {
+        const sku = excelText(row[0]);
+        const name = excelText(row[1]);
+        const variant = excelText(row[2]);
+        const hpp = excelNumber(row[3]);
+        if (!sku || !name) continue;
+        productHpp.set(sku, hpp);
+        const [product, created] = await Product.findOrCreate({
+          where: { sku, businessId },
+          defaults: {
+            businessId,
+            sku,
+            name,
+            variant: variant || '-',
+            hpp,
+          },
+          transaction: t,
         });
-        summary.productsUpdated += 1;
-      }
-    }
-  }
-
-  const defaultStoreName = detectStoreNameFromFile(fileName);
-  const saleSheetNames = workbook.SheetNames.filter((name) => name !== 'Data Barang');
-  for (const sheetName of saleSheetNames) {
-    const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null });
-    const headerRowIndex = rows.findIndex((row) => detectSaleTemplate(row));
-    if (headerRowIndex < 0) {
-      summary.sheets.push({
-        name: sheetName,
-        format: 'tidak dikenali',
-        created: 0,
-        skipped: 0,
-      });
-      continue;
-    }
-    const headers = rows[headerRowIndex];
-    const map = headerIndex(headers);
-    const format = detectSaleTemplate(headers);
-    const sheetStats = { created: 0, skipped: 0 };
-    const sheetFailedRows = [];
-    const dataRows = rows.slice(headerRowIndex + 1);
-
-    for (let rowIdx = 0; rowIdx < dataRows.length; rowIdx += 1) {
-      const row = dataRows[rowIdx];
-      const rowNumber = headerRowIndex + rowIdx + 2;
-      let record = null;
-
-      if (format === 'pesanan') {
-        const qty = numberByHeader(row, map, ['Qty Aktual', 'Jumlah']);
-        const totalHpp = numberByHeader(row, map, ['Total HPP']);
-        record = {
-          saleDate: dateByHeader(row, map, ['Tanggal']),
-          channel: textByHeader(row, map, ['Platform']) || 'Shopee',
-          storeName: defaultStoreName || textByHeader(row, map, ['Platform']) || 'Shopee',
-          orderNumber: textByHeader(row, map, ['ID Pesanan']),
-          customer: textByHeader(row, map, ['Pembeli']),
-          productName: textByHeader(row, map, ['Produk']),
-          variant: textByHeader(row, map, ['Varian']),
-          sku: textByHeader(row, map, ['SKU']),
-          qty,
-          price: numberByHeader(row, map, ['Harga Satuan']),
-          subtotal: numberByHeader(row, map, ['Total Harga Jual', 'Total Harga Produk']),
-          adminFee: 0,
-          hpp: qty > 0 ? Math.round(totalHpp / qty) : 0,
-          totalHpp,
-        };
-      } else if (format === 'penghasilan') {
-        const qty = numberByHeader(row, map, ['Jumlah']);
-        const totalFee = numberByHeader(row, map, ['Total Biaya']) || numberByHeader(row, map, ['Biaya Admin']);
-        record = {
-          saleDate: dateByHeader(row, map, ['Tanggal']),
-          channel: 'Shopee',
-          storeName: defaultStoreName || 'Shopee',
-          orderNumber: textByHeader(row, map, ['ID Pesanan']),
-          customer: '',
-          productName: textByHeader(row, map, ['Produk']),
-          variant: textByHeader(row, map, ['Varian']),
-          sku: textByHeader(row, map, ['SKU']),
-          qty,
-          price: qty > 0 ? Math.round(numberByHeader(row, map, ['Total Harga Produk']) / qty) : 0,
-          subtotal: numberByHeader(row, map, ['Total Harga Jual', 'Total Harga Produk']),
-          adminFee: totalFee,
-          hpp: productHpp.get(textByHeader(row, map, ['SKU'])) || 0,
-          totalHpp: 0,
-        };
-      } else if (format === 'rincian-pendapatan-barang') {
-        const store = textByHeader(row, map, ['Nama Toko']);
-        const channel = textByHeader(row, map, ['Channel']);
-        record = {
-          saleDate: dateByHeader(row, map, ['Tanggal']),
-          channel,
-          storeName: store || channel,
-          orderNumber: textByHeader(row, map, ['No Pesanan']),
-          customer: textByHeader(row, map, ['Pelanggan']),
-          productName: textByHeader(row, map, ['Nama Barang']),
-          variant: '',
-          sku: textByHeader(row, map, ['SKU']),
-          qty: numberByHeader(row, map, ['QTY']),
-          price: numberByHeader(row, map, ['Harga']),
-          subtotal: numberByHeader(row, map, ['Sub Total']),
-          adminFee: numberByHeader(row, map, ['Potongan Biaya', 'Biaya Lainnya']),
-          hpp: productHpp.get(textByHeader(row, map, ['SKU'])) || 0,
-          totalHpp: 0,
-        };
-      } else {
-        record = {
-          saleDate: dateByHeader(row, map, ['Tanggal']),
-          channel: textByHeader(row, map, ['Channel']),
-          storeName: textByHeader(row, map, ['Nama Toko']),
-          orderNumber: textByHeader(row, map, ['No Pesanan']),
-          customer: textByHeader(row, map, ['Pelanggan']),
-          productName: textByHeader(row, map, ['Nama Barang']),
-          variant: '',
-          sku: textByHeader(row, map, ['SKU']),
-          qty: numberByHeader(row, map, ['QTY', 'Jumlah']),
-          price: numberByHeader(row, map, ['Harga']),
-          subtotal: numberByHeader(row, map, ['Sub Total', 'Subtotal']),
-          adminFee: numberByHeader(row, map, ['Biaya Admin']),
-          hpp: numberByHeader(row, map, ['HPP', 'Hpp']) || productHpp.get(textByHeader(row, map, ['SKU'])) || 0,
-          totalHpp: numberByHeader(row, map, ['Total Hpp', 'Total HPP']),
-        };
-      }
-
-      if (!record || !record.sku || !record.saleDate) {
-        if ((row || []).some((cell) => cell !== null && cell !== undefined && cell !== '')) {
-          sheetFailedRows.push({ rowNumber, reason: 'SKU atau Tanggal kosong', raw: row || [] });
+        if (created) {
+          summary.productsCreated += 1;
+        } else {
+          await product.update({
+            name,
+            variant: variant || product.variant || '-',
+            hpp,
+          }, { transaction: t });
+          summary.productsUpdated += 1;
         }
+      }
+    }
+
+    const defaultStoreName = detectStoreNameFromFile(fileName);
+    const saleSheetNames = workbook.SheetNames.filter((name) => name !== 'Data Barang');
+
+    // Pass 1: parse every sheet's rows into candidate records without touching the
+    // database, so the (much slower) DB work below can run in a few batched queries
+    // instead of two or three queries per row.
+    const sheetResults = [];
+    for (const sheetName of saleSheetNames) {
+      const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null });
+      const headerRowIndex = rows.findIndex((row) => detectSaleTemplate(row));
+      if (headerRowIndex < 0) {
+        sheetResults.push({ name: sheetName, format: 'tidak dikenali', created: 0, skipped: 0 });
         continue;
       }
-      const result = await createImportedSale(record, productHpp, summary, sheetStats, occurrenceCounts, businessId);
-      if (result === 'invalid') {
-        sheetFailedRows.push({ rowNumber, reason: 'Channel, toko, tanggal, SKU, atau jumlah tidak lengkap', raw: row || [] });
+      const headers = rows[headerRowIndex];
+      const map = headerIndex(headers);
+      const format = detectSaleTemplate(headers);
+      const sheetStats = { created: 0, skipped: 0 };
+      const sheetFailedRows = [];
+      const dataRows = rows.slice(headerRowIndex + 1);
+      const candidates = [];
+
+      for (let rowIdx = 0; rowIdx < dataRows.length; rowIdx += 1) {
+        const row = dataRows[rowIdx];
+        const rowNumber = headerRowIndex + rowIdx + 2;
+        let record = null;
+
+        if (format === 'pesanan') {
+          const qty = numberByHeader(row, map, ['Qty Aktual', 'Jumlah']);
+          const totalHpp = numberByHeader(row, map, ['Total HPP']);
+          record = {
+            saleDate: dateByHeader(row, map, ['Tanggal']),
+            channel: textByHeader(row, map, ['Platform']) || 'Shopee',
+            storeName: defaultStoreName || textByHeader(row, map, ['Platform']) || 'Shopee',
+            orderNumber: textByHeader(row, map, ['ID Pesanan']),
+            customer: textByHeader(row, map, ['Pembeli']),
+            productName: textByHeader(row, map, ['Produk']),
+            variant: textByHeader(row, map, ['Varian']),
+            sku: textByHeader(row, map, ['SKU']),
+            qty,
+            price: numberByHeader(row, map, ['Harga Satuan']),
+            subtotal: numberByHeader(row, map, ['Total Harga Jual', 'Total Harga Produk']),
+            adminFee: 0,
+            hpp: qty > 0 ? Math.round(totalHpp / qty) : 0,
+            totalHpp,
+          };
+        } else if (format === 'penghasilan') {
+          const qty = numberByHeader(row, map, ['Jumlah']);
+          const totalFee = numberByHeader(row, map, ['Total Biaya']) || numberByHeader(row, map, ['Biaya Admin']);
+          record = {
+            saleDate: dateByHeader(row, map, ['Tanggal']),
+            channel: 'Shopee',
+            storeName: defaultStoreName || 'Shopee',
+            orderNumber: textByHeader(row, map, ['ID Pesanan']),
+            customer: '',
+            productName: textByHeader(row, map, ['Produk']),
+            variant: textByHeader(row, map, ['Varian']),
+            sku: textByHeader(row, map, ['SKU']),
+            qty,
+            price: qty > 0 ? Math.round(numberByHeader(row, map, ['Total Harga Produk']) / qty) : 0,
+            subtotal: numberByHeader(row, map, ['Total Harga Jual', 'Total Harga Produk']),
+            adminFee: totalFee,
+            hpp: productHpp.get(textByHeader(row, map, ['SKU'])) || 0,
+            totalHpp: 0,
+          };
+        } else if (format === 'rincian-pendapatan-barang') {
+          const store = textByHeader(row, map, ['Nama Toko']);
+          const channel = textByHeader(row, map, ['Channel']);
+          record = {
+            saleDate: dateByHeader(row, map, ['Tanggal']),
+            channel,
+            storeName: store || channel,
+            orderNumber: textByHeader(row, map, ['No Pesanan']),
+            customer: textByHeader(row, map, ['Pelanggan']),
+            productName: textByHeader(row, map, ['Nama Barang']),
+            variant: '',
+            sku: textByHeader(row, map, ['SKU']),
+            qty: numberByHeader(row, map, ['QTY']),
+            price: numberByHeader(row, map, ['Harga']),
+            subtotal: numberByHeader(row, map, ['Sub Total']),
+            adminFee: numberByHeader(row, map, ['Potongan Biaya', 'Biaya Lainnya']),
+            hpp: productHpp.get(textByHeader(row, map, ['SKU'])) || 0,
+            totalHpp: 0,
+          };
+        } else {
+          record = {
+            saleDate: dateByHeader(row, map, ['Tanggal']),
+            channel: textByHeader(row, map, ['Channel']),
+            storeName: textByHeader(row, map, ['Nama Toko']),
+            orderNumber: textByHeader(row, map, ['No Pesanan']),
+            customer: textByHeader(row, map, ['Pelanggan']),
+            productName: textByHeader(row, map, ['Nama Barang']),
+            variant: '',
+            sku: textByHeader(row, map, ['SKU']),
+            qty: numberByHeader(row, map, ['QTY', 'Jumlah']),
+            price: numberByHeader(row, map, ['Harga']),
+            subtotal: numberByHeader(row, map, ['Sub Total', 'Subtotal']),
+            adminFee: numberByHeader(row, map, ['Biaya Admin']),
+            hpp: numberByHeader(row, map, ['HPP', 'Hpp']) || productHpp.get(textByHeader(row, map, ['SKU'])) || 0,
+            totalHpp: numberByHeader(row, map, ['Total Hpp', 'Total HPP']),
+          };
+        }
+
+        if (!record || !record.sku || !record.saleDate) {
+          if ((row || []).some((cell) => cell !== null && cell !== undefined && cell !== '')) {
+            sheetFailedRows.push({ rowNumber, reason: 'SKU atau Tanggal kosong', raw: row || [] });
+          }
+          continue;
+        }
+        const normalized = normalizeImportedSaleRecord(record, summary);
+        if (normalized === 'invalid') {
+          sheetFailedRows.push({ rowNumber, reason: 'Channel, toko, tanggal, SKU, atau jumlah tidak lengkap', raw: row || [] });
+          continue;
+        }
+        candidates.push(normalized);
+      }
+
+      sheetResults.push({ sheetName, format, headers, sheetStats, sheetFailedRows, candidates });
+    }
+
+    // Pass 2: ensure every SKU referenced across all sheets has a Product row, in a
+    // couple of batched queries.
+    const allCandidates = sheetResults.flatMap((item) => item.candidates || []);
+    const hppBySku = await ensureImportedProducts(allCandidates, productHpp, summary, businessId, t);
+
+    // Pass 3: fetch pre-import duplicate counts in bulk, then decide create/skip for
+    // every row and build the final batch insert.
+    const existingCounts = await fetchExistingOrderSkuCounts(allCandidates, businessId, t);
+    const occurrenceCounts = new Map();
+    const toInsert = [];
+
+    for (const item of sheetResults) {
+      if (!item.candidates) continue;
+      for (const record of item.candidates) {
+        const baseProductHpp = hppBySku.get(record.sku) || 0;
+        const totalHpp = record.totalHpp || record.qty * (record.hpp || baseProductHpp || 0);
+        const hpp = record.hpp || (record.qty > 0 ? Math.round(totalHpp / record.qty) : 0) || baseProductHpp || 0;
+
+        const duplicateWhere = record.orderNumber
+          ? { orderNumber: record.orderNumber, sku: record.sku, businessId }
+          : {
+            saleDate: record.saleDate,
+            channel: record.channel,
+            storeName: record.storeName,
+            customer: record.customer,
+            sku: record.sku,
+            qty: record.qty,
+            price: record.price,
+            subtotal: record.subtotal,
+            businessId,
+          };
+        const duplicateKey = JSON.stringify(duplicateWhere);
+        const occurrence = (occurrenceCounts.get(duplicateKey) || 0) + 1;
+        occurrenceCounts.set(duplicateKey, occurrence);
+        const existingCount = record.orderNumber
+          ? (existingCounts.get(JSON.stringify([record.orderNumber, record.sku])) || 0)
+          : await Sale.count({ where: duplicateWhere, transaction: t });
+
+        if (existingCount >= occurrence) {
+          summary.salesSkipped += 1;
+          item.sheetStats.skipped += 1;
+          continue;
+        }
+
+        toInsert.push({
+          businessId,
+          saleDate: record.saleDate,
+          platformId: null,
+          channel: record.channel,
+          storeName: record.storeName,
+          orderNumber: record.orderNumber,
+          customer: record.customer,
+          sku: record.sku,
+          qty: record.qty,
+          price: record.price,
+          subtotal: record.subtotal,
+          adminFee: record.adminFee,
+          hpp,
+          totalHpp: totalHpp || record.qty * hpp,
+        });
+        summary.salesCreated += 1;
+        item.sheetStats.created += 1;
       }
     }
 
-    summary.sheets.push({
-      name: sheetName,
-      format,
-      created: sheetStats.created,
-      skipped: sheetStats.skipped,
-    });
-
-    if (sheetFailedRows.length) {
-      const headerRow = (headers || []).map((cell) => excelText(cell));
-      sheetFailureGroups.push({ sheetName, headerRow, failedRows: sheetFailedRows });
+    if (toInsert.length) {
+      await Sale.bulkCreate(toInsert, { transaction: t });
     }
-  }
+
+    for (const item of sheetResults) {
+      if (!item.candidates) {
+        summary.sheets.push(item);
+        continue;
+      }
+      summary.sheets.push({
+        name: item.sheetName,
+        format: item.format,
+        created: item.sheetStats.created,
+        skipped: item.sheetStats.skipped,
+      });
+      if (item.sheetFailedRows.length) {
+        const headerRow = (item.headers || []).map((cell) => excelText(cell));
+        sheetFailureGroups.push({ sheetName: item.sheetName, headerRow, failedRows: item.sheetFailedRows });
+      }
+    }
+  });
 
   const totalFailed = sheetFailureGroups.reduce((sum, group) => sum + group.failedRows.length, 0);
   if (totalFailed) {
