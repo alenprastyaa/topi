@@ -1859,6 +1859,99 @@
                   <p class="mt-3 text-xl font-semibold text-slate-50">{{ formatAccountingMoney(profitReport?.totals?.nonOperationalIncome || 0) }}</p>
                 </div>
               </div>
+
+              <div class="rounded-lg border border-slate-800 bg-slate-900 shadow-lg shadow-black/10">
+                <div class="flex flex-col gap-3 border-b border-slate-800 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p class="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">Pembagian Keuntungan</p>
+                    <h4 class="mt-1 text-lg font-semibold text-slate-50">Bagi hasil {{ profitShare?.periodLabel || '' }}</h4>
+                    <p class="mt-1 text-xs text-slate-400">Laba bersih bulan berjalan dibagi sesuai persentase tiap pihak, lalu dicicil sampai lunas.</p>
+                  </div>
+                  <div class="flex flex-wrap items-end gap-3">
+                    <div>
+                      <label class="mb-1 block text-xs text-slate-400">Bulan</label>
+                      <input v-model="profitShareMonth" @change="fetchProfitShare" type="month" class="rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400" />
+                    </div>
+                    <button @click="openModal('profitSharePartner')" class="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">+ Tambah Pihak</button>
+                  </div>
+                </div>
+
+                <div class="grid gap-4 border-b border-slate-800 p-5 md:grid-cols-3">
+                  <div>
+                    <p class="text-sm text-slate-400">Laba Bersih Bulan Ini</p>
+                    <p class="mt-2 text-xl font-semibold text-emerald-300">{{ formatAccountingMoney(profitShare?.netProfit || 0) }}</p>
+                  </div>
+                  <div>
+                    <p class="text-sm text-slate-400">Total Sudah Dibayar</p>
+                    <p class="mt-2 text-xl font-semibold text-slate-50">{{ formatAccountingMoney(profitShare?.totals?.paidSum || 0) }}</p>
+                  </div>
+                  <div>
+                    <p class="text-sm text-slate-400">Total Sisa Belum Dibayar</p>
+                    <p class="mt-2 text-xl font-semibold text-amber-300">{{ formatAccountingMoney(profitShare?.totals?.remainingSum || 0) }}</p>
+                  </div>
+                </div>
+
+                <p v-if="profitShare && Math.round(profitShare.percentageSum) !== 100" class="mx-5 mt-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-xs text-amber-300">
+                  Total persentase pihak saat ini {{ profitShare.percentageSum }}%, belum genap 100%.
+                </p>
+
+                <div class="overflow-x-auto">
+                  <table class="min-w-full text-left text-sm">
+                    <thead class="border-b border-slate-800 text-slate-400">
+                      <tr>
+                        <th class="px-5 py-3">Pihak</th>
+                        <th class="px-5 py-3 text-right">Persentase</th>
+                        <th class="px-5 py-3 text-right">Target Bagi Hasil</th>
+                        <th class="px-5 py-3 text-right">Sudah Dibayar</th>
+                        <th class="px-5 py-3 text-right">Sisa</th>
+                        <th class="px-5 py-3 text-center">Status</th>
+                        <th class="px-5 py-3 text-right">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template v-for="partner in profitShare?.partners || []" :key="'ps-'+partner.id">
+                        <tr class="border-b border-slate-800">
+                          <td class="px-5 py-3 text-slate-100">{{ partner.name }}</td>
+                          <td class="px-5 py-3 text-right text-slate-300">{{ partner.percentage }}%</td>
+                          <td class="px-5 py-3 text-right text-slate-100">
+                            <button @click="editProfitShareTarget(partner)" class="underline decoration-dotted underline-offset-4 transition hover:text-cyan-300">
+                              {{ formatAccountingMoney(partner.target) }}
+                            </button>
+                            <span v-if="partner.isOverride" class="ml-1 text-[10px] uppercase text-amber-400">manual</span>
+                          </td>
+                          <td class="px-5 py-3 text-right text-slate-100">{{ formatAccountingMoney(partner.totalPaid) }}</td>
+                          <td class="px-5 py-3 text-right" :class="partner.remaining > 0 ? 'text-amber-300' : 'text-emerald-300'">{{ formatAccountingMoney(partner.remaining) }}</td>
+                          <td class="px-5 py-3 text-center">
+                            <span :class="partner.status === 'TUNTAS' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-300'" class="rounded-full px-3 py-1 text-xs font-semibold">{{ partner.status }}</span>
+                          </td>
+                          <td class="px-5 py-3 text-right">
+                            <div class="flex flex-wrap justify-end gap-2">
+                              <button @click="addProfitShareInstallment(partner)" class="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 transition hover:border-cyan-400 hover:text-cyan-300">+ Cicilan</button>
+                              <button @click="openModal('profitSharePartner', partner)" class="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 transition hover:border-cyan-400 hover:text-cyan-300">Ubah</button>
+                              <button @click="removeProfitSharePartner(partner)" class="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 transition hover:border-red-500 hover:text-red-300">Hapus</button>
+                            </div>
+                          </td>
+                        </tr>
+                        <tr v-if="partner.installments.length" class="border-b border-slate-800 bg-slate-950/50">
+                          <td colspan="7" class="px-5 py-3">
+                            <p class="mb-2 text-xs uppercase tracking-[0.18em] text-slate-500">Riwayat cicilan</p>
+                            <div class="flex flex-wrap gap-2">
+                              <span v-for="item in partner.installments" :key="'psi-'+item.id" class="inline-flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-slate-300">
+                                {{ formatDate(item.paidDate) }} · {{ formatAccountingMoney(item.amount) }}
+                                <span v-if="item.note" class="text-slate-500">({{ item.note }})</span>
+                                <button @click="removeProfitShareInstallment(item)" class="text-slate-500 transition hover:text-red-400">&times;</button>
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      </template>
+                      <tr v-if="!profitShare?.partners?.length">
+                        <td colspan="7" class="px-5 py-8 text-center text-slate-500">Belum ada pihak pembagian keuntungan. Klik "Tambah Pihak" untuk mulai.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </section>
 
             <section v-if="activeTab === 'pengaturan'" class="space-y-4">
@@ -2454,6 +2547,8 @@
           dashboardRangeDraftTo: '',
           salaryWeekStart: sundayOfWeekString(todayString()),
           dashboard: null,
+          profitShareMonth: monthString(),
+          profitShare: null,
           users: [],
           shifts: [],
           stores: [],
@@ -2829,6 +2924,9 @@
           }
           if (next === 'dashboard' && this.isBackOffice) {
             this.$nextTick(() => this.renderRevenueTrendChart());
+          }
+          if (next === 'laba-rugi' && this.isOwner) {
+            this.fetchProfitShare();
           }
         },
       },
@@ -4374,6 +4472,14 @@
               ],
               defaults: { expenseDate: todayString(), category: this.marketingCategories[0]?.name || '', platformStore: this.storeOptions[0]?.value || '', nominal: 0, taxRate: 0, totalTax: 0 },
             },
+            profitSharePartner: {
+              title: row ? 'Ubah Pihak Pembagian Keuntungan' : 'Tambah Pihak Pembagian Keuntungan',
+              fields: [
+                { key: 'name', label: 'Nama Pihak', type: 'text' },
+                { key: 'percentage', label: 'Persentase (%)', type: 'number', step: '0.01' },
+              ],
+              defaults: { percentage: 0 },
+            },
           };
 
           const config = configs[entity];
@@ -4410,6 +4516,7 @@
             sale: '/api/sales',
             operational: '/api/expenses/operasional',
             marketing: '/api/expenses/marketing',
+            profitSharePartner: '/api/profit-share/partners',
           };
           return map[entity];
         },
@@ -4438,6 +4545,9 @@
               if (form[key] !== undefined) form[key] = Number(form[key] || 0);
             }
           }
+          if (entity === 'profitSharePartner') {
+            form.percentage = Number(form.percentage || 0);
+          }
           return form;
         },
         async saveModal() {
@@ -4455,6 +4565,9 @@
             await this.refreshAll();
             if (savedEntity === 'sale' && this.saleDetailModal.open) {
               await this.refreshSaleDetail();
+            }
+            if (savedEntity === 'profitSharePartner') {
+              await this.fetchProfitShare();
             }
             await Swal.fire({
               icon: 'success',
@@ -4506,6 +4619,78 @@
           } catch (error) {
             Swal.fire({ icon: 'error', title: 'Gagal menambah hari libur', text: error.message || 'Silakan coba lagi.', confirmButtonColor: '#06b6d4' });
           }
+        },
+        async fetchProfitShare() {
+          if (!this.isOwner) return;
+          try {
+            this.profitShare = await this.request(`/api/profit-share/summary?period=${this.profitShareMonth}`);
+          } catch (error) {
+            this.profitShare = null;
+          }
+        },
+        async editProfitShareTarget(partner) {
+          const { value, isConfirmed } = await Swal.fire({
+            title: `Atur target bagi hasil - ${partner.name}`,
+            input: 'number',
+            inputValue: partner.target,
+            inputLabel: `Otomatis (${partner.percentage}% dari laba bersih): ${this.formatAccountingMoney(partner.autoShare)}`,
+            html: '<p class="text-xs text-slate-400">Kosongkan lalu simpan untuk kembali ke perhitungan otomatis.</p>',
+            showCancelButton: true,
+            confirmButtonText: 'Simpan',
+            confirmButtonColor: '#06b6d4',
+            cancelButtonColor: '#334155',
+          });
+          if (!isConfirmed) return;
+          try {
+            await this.request('/api/profit-share/target', {
+              method: 'PUT',
+              body: JSON.stringify({ partnerId: partner.id, period: this.profitShareMonth, amount: value === '' || value === null || value === undefined ? null : Number(value) }),
+            });
+            await this.fetchProfitShare();
+          } catch (error) {
+            Swal.fire({ icon: 'error', title: 'Gagal menyimpan target', text: error.message || 'Silakan coba lagi.', confirmButtonColor: '#06b6d4' });
+          }
+        },
+        async addProfitShareInstallment(partner) {
+          const { value: formValues } = await Swal.fire({
+            title: `Tambah cicilan - ${partner.name}`,
+            html:
+              `<input id="swal-ps-date" type="date" class="swal2-input" value="${todayString()}">` +
+              '<input id="swal-ps-amount" type="number" class="swal2-input" placeholder="Nominal cicilan">' +
+              '<input id="swal-ps-note" type="text" class="swal2-input" placeholder="Catatan (opsional)">',
+            focusConfirm: false,
+            showCancelButton: true,
+            confirmButtonColor: '#06b6d4',
+            cancelButtonColor: '#334155',
+            preConfirm: () => {
+              const paidDate = document.getElementById('swal-ps-date').value;
+              const amount = document.getElementById('swal-ps-amount').value;
+              const note = document.getElementById('swal-ps-note').value;
+              if (!paidDate || !amount || Number(amount) <= 0) {
+                Swal.showValidationMessage('Tanggal dan nominal wajib diisi');
+                return false;
+              }
+              return { paidDate, amount: Number(amount), note };
+            },
+          });
+          if (!formValues) return;
+          try {
+            await this.request('/api/profit-share/installments', {
+              method: 'POST',
+              body: JSON.stringify({ partnerId: partner.id, period: this.profitShareMonth, ...formValues }),
+            });
+            await this.fetchProfitShare();
+          } catch (error) {
+            Swal.fire({ icon: 'error', title: 'Gagal menyimpan cicilan', text: error.message || 'Silakan coba lagi.', confirmButtonColor: '#06b6d4' });
+          }
+        },
+        async removeProfitSharePartner(partner) {
+          await this.removeRow('profit-share/partners', partner);
+          await this.fetchProfitShare();
+        },
+        async removeProfitShareInstallment(item) {
+          await this.removeRow('profit-share/installments', item);
+          await this.fetchProfitShare();
         },
         async removeRow(endpointKey, row) {
           try {

@@ -757,6 +757,86 @@ const ExpenseCategory = sequelize.define('ExpenseCategory', {
   ],
 });
 
+const ProfitSharePartner = sequelize.define('ProfitSharePartner', {
+  businessId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  name: {
+    type: DataTypes.STRING(120),
+    allowNull: false,
+  },
+  percentage: {
+    type: DataTypes.FLOAT,
+    allowNull: false,
+    defaultValue: 0,
+  },
+  sortOrder: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+  },
+  active: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
+  },
+}, {
+  tableName: 'profit_share_partners',
+});
+
+const ProfitShareTarget = sequelize.define('ProfitShareTarget', {
+  partnerId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  },
+  period: {
+    type: DataTypes.STRING(7),
+    allowNull: false,
+  },
+  amount: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+  },
+}, {
+  tableName: 'profit_share_targets',
+  indexes: [
+    { unique: true, fields: ['partner_id', 'period'] },
+  ],
+});
+
+const ProfitShareInstallment = sequelize.define('ProfitShareInstallment', {
+  partnerId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  },
+  period: {
+    type: DataTypes.STRING(7),
+    allowNull: false,
+  },
+  paidDate: {
+    type: DataTypes.DATEONLY,
+    allowNull: false,
+  },
+  amount: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+  },
+  note: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+  },
+}, {
+  tableName: 'profit_share_installments',
+});
+
+ProfitSharePartner.hasMany(ProfitShareTarget, { foreignKey: 'partnerId' });
+ProfitShareTarget.belongsTo(ProfitSharePartner, { foreignKey: 'partnerId' });
+ProfitSharePartner.hasMany(ProfitShareInstallment, { foreignKey: 'partnerId' });
+ProfitShareInstallment.belongsTo(ProfitSharePartner, { foreignKey: 'partnerId' });
+
 Platform.hasMany(Store, { foreignKey: 'platformId' });
 Store.belongsTo(Platform, { foreignKey: 'platformId' });
 Platform.hasMany(Sale, { foreignKey: 'platformId' });
@@ -956,6 +1036,25 @@ const serializeExpenseCategory = (row) => ({
   businessId: row.businessId || null,
   name: row.name,
   kind: row.kind,
+});
+
+const serializeProfitSharePartner = (row) => ({
+  id: row.id,
+  businessId: row.businessId || null,
+  name: row.name,
+  percentage: row.percentage,
+  sortOrder: row.sortOrder,
+  active: Boolean(row.active),
+});
+
+const serializeProfitShareInstallment = (row) => ({
+  id: row.id,
+  partnerId: row.partnerId,
+  period: row.period,
+  paidDate: row.paidDate,
+  amount: row.amount,
+  note: row.note || '',
+  createdAt: row.createdAt,
 });
 
 function auth(req, res, next) {
@@ -3777,6 +3876,231 @@ app.get('/api/reports/profit/pdf', ...authRequired, ownerOnly, async (req, res) 
     return res.send(buffer);
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Gagal membuat PDF laba rugi.' });
+  }
+});
+
+function monthRange(period) {
+  const [y, m] = period.split('-').map(Number);
+  const from = `${period}-01`;
+  const to = `${period}-${pad(new Date(y, m, 0).getDate())}`;
+  return { from, to };
+}
+
+function formatPeriodMonthLabel(period) {
+  const [y, m] = period.split('-').map(Number);
+  return new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric' }).format(new Date(y, m - 1, 1));
+}
+
+app.get('/api/profit-share/partners', ...authRequired, ownerOnly, async (req, res) => {
+  try {
+    const rows = await ProfitSharePartner.findAll({
+      where: businessWhere(req),
+      order: [['sortOrder', 'ASC'], ['name', 'ASC']],
+    });
+    return res.json({ ok: true, data: rows.map(serializeProfitSharePartner) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Gagal memuat data pembagian keuntungan.' });
+  }
+});
+
+app.post('/api/profit-share/partners', ...authRequired, ownerOnly, async (req, res) => {
+  try {
+    if (!requireConcreteBusiness(req, res)) return;
+    const name = toText(req.body.name);
+    const percentage = toFloat(req.body.percentage, 0);
+    if (!name) {
+      return res.status(400).json({ ok: false, message: 'Nama pihak wajib diisi.' });
+    }
+    if (percentage < 0 || percentage > 100) {
+      return res.status(400).json({ ok: false, message: 'Persentase harus di antara 0 - 100.' });
+    }
+    const row = await ProfitSharePartner.create({ name, percentage, businessId: req.businessId });
+    return res.status(201).json({ ok: true, data: serializeProfitSharePartner(row) });
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message || 'Gagal menambah pihak pembagian keuntungan.' });
+  }
+});
+
+app.put('/api/profit-share/partners/:id', ...authRequired, ownerOnly, async (req, res) => {
+  try {
+    const row = await ProfitSharePartner.findByPk(toInt(req.params.id, null));
+    if (!row || !assertOwnedByBusiness(row, req)) {
+      return res.status(404).json({ ok: false, message: 'Data tidak ditemukan.' });
+    }
+    const name = toText(req.body.name);
+    const percentage = toFloat(req.body.percentage, row.percentage);
+    if (!name) {
+      return res.status(400).json({ ok: false, message: 'Nama pihak wajib diisi.' });
+    }
+    if (percentage < 0 || percentage > 100) {
+      return res.status(400).json({ ok: false, message: 'Persentase harus di antara 0 - 100.' });
+    }
+    row.name = name;
+    row.percentage = percentage;
+    if (req.body.active !== undefined) row.active = Boolean(req.body.active);
+    await row.save();
+    return res.json({ ok: true, data: serializeProfitSharePartner(row) });
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message || 'Gagal menyimpan perubahan.' });
+  }
+});
+
+app.delete('/api/profit-share/partners/:id', ...authRequired, ownerOnly, async (req, res) => {
+  try {
+    const row = await ProfitSharePartner.findByPk(toInt(req.params.id, null));
+    if (!row || !assertOwnedByBusiness(row, req)) {
+      return res.status(404).json({ ok: false, message: 'Data tidak ditemukan.' });
+    }
+    await ProfitShareInstallment.destroy({ where: { partnerId: row.id } });
+    await ProfitShareTarget.destroy({ where: { partnerId: row.id } });
+    await row.destroy();
+    return res.json({ ok: true, message: 'Pihak pembagian keuntungan dihapus.' });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Gagal menghapus data.' });
+  }
+});
+
+app.get('/api/profit-share/summary', ...authRequired, ownerOnly, async (req, res) => {
+  try {
+    if (!requireConcreteBusiness(req, res)) return;
+    const period = /^\d{4}-\d{2}$/.test(toText(req.query.period)) ? toText(req.query.period) : jakartaDate().slice(0, 7);
+    const { from, to } = monthRange(period);
+
+    const partners = await ProfitSharePartner.findAll({
+      where: businessWhere(req, { active: true }),
+      order: [['sortOrder', 'ASC'], ['name', 'ASC']],
+    });
+    const partnerIds = partners.map((p) => p.id);
+
+    const profit = await buildProfitSummary(from, to, {}, req.businessId);
+    const netProfit = profit.totals.netProfit;
+
+    const targets = partnerIds.length
+      ? await ProfitShareTarget.findAll({ where: { period, partnerId: { [Op.in]: partnerIds } } })
+      : [];
+    const targetByPartner = new Map(targets.map((t) => [t.partnerId, t]));
+
+    const installments = partnerIds.length
+      ? await ProfitShareInstallment.findAll({ where: { period, partnerId: { [Op.in]: partnerIds } }, order: [['paidDate', 'ASC'], ['id', 'ASC']] })
+      : [];
+    const installmentsByPartner = new Map();
+    for (const row of installments) {
+      if (!installmentsByPartner.has(row.partnerId)) installmentsByPartner.set(row.partnerId, []);
+      installmentsByPartner.get(row.partnerId).push(serializeProfitShareInstallment(row));
+    }
+
+    let percentageSum = 0;
+    let targetSum = 0;
+    let paidSum = 0;
+    let remainingSum = 0;
+
+    const partnerRows = partners.map((partner) => {
+      const autoShare = Math.round(netProfit * (partner.percentage / 100));
+      const targetRow = targetByPartner.get(partner.id);
+      const target = targetRow ? targetRow.amount : autoShare;
+      const partnerInstallments = installmentsByPartner.get(partner.id) || [];
+      const totalPaid = partnerInstallments.reduce((sum, item) => sum + item.amount, 0);
+      const remaining = target - totalPaid;
+      percentageSum += partner.percentage;
+      targetSum += target;
+      paidSum += totalPaid;
+      remainingSum += remaining;
+      return {
+        ...serializeProfitSharePartner(partner),
+        autoShare,
+        target,
+        isOverride: Boolean(targetRow),
+        totalPaid,
+        remaining,
+        status: remaining <= 0 ? 'TUNTAS' : 'BELUM TUNTAS',
+        installments: partnerInstallments,
+      };
+    });
+
+    return res.json({
+      ok: true,
+      data: {
+        period,
+        periodLabel: formatPeriodMonthLabel(period),
+        netProfit,
+        percentageSum,
+        partners: partnerRows,
+        totals: { targetSum, paidSum, remainingSum },
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Gagal memuat pembagian keuntungan.' });
+  }
+});
+
+app.put('/api/profit-share/target', ...authRequired, ownerOnly, async (req, res) => {
+  try {
+    const partnerId = toInt(req.body.partnerId, null);
+    const period = toText(req.body.period);
+    if (!partnerId || !/^\d{4}-\d{2}$/.test(period)) {
+      return res.status(400).json({ ok: false, message: 'Pihak dan periode wajib valid.' });
+    }
+    const partner = await ProfitSharePartner.findByPk(partnerId);
+    if (!partner || !assertOwnedByBusiness(partner, req)) {
+      return res.status(404).json({ ok: false, message: 'Pihak tidak ditemukan.' });
+    }
+    if (req.body.amount === null || req.body.amount === '') {
+      await ProfitShareTarget.destroy({ where: { partnerId, period } });
+      return res.json({ ok: true, message: 'Target dikembalikan ke perhitungan otomatis.' });
+    }
+    const amount = toInt(req.body.amount, 0);
+    const [row] = await ProfitShareTarget.findOrCreate({ where: { partnerId, period }, defaults: { partnerId, period, amount } });
+    row.amount = amount;
+    await row.save();
+    return res.json({ ok: true, message: 'Target pembulatan tersimpan.' });
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message || 'Gagal menyimpan target.' });
+  }
+});
+
+app.post('/api/profit-share/installments', ...authRequired, ownerOnly, async (req, res) => {
+  try {
+    const partnerId = toInt(req.body.partnerId, null);
+    const period = toText(req.body.period);
+    const paidDate = toText(req.body.paidDate) || jakartaDate();
+    const amount = toInt(req.body.amount, 0);
+    if (!partnerId || !/^\d{4}-\d{2}$/.test(period)) {
+      return res.status(400).json({ ok: false, message: 'Pihak dan periode wajib valid.' });
+    }
+    if (amount <= 0) {
+      return res.status(400).json({ ok: false, message: 'Nominal cicilan harus lebih dari 0.' });
+    }
+    const partner = await ProfitSharePartner.findByPk(partnerId);
+    if (!partner || !assertOwnedByBusiness(partner, req)) {
+      return res.status(404).json({ ok: false, message: 'Pihak tidak ditemukan.' });
+    }
+    const row = await ProfitShareInstallment.create({
+      partnerId,
+      period,
+      paidDate,
+      amount,
+      note: toText(req.body.note) || null,
+    });
+    return res.status(201).json({ ok: true, data: serializeProfitShareInstallment(row) });
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message || 'Gagal menyimpan cicilan.' });
+  }
+});
+
+app.delete('/api/profit-share/installments/:id', ...authRequired, ownerOnly, async (req, res) => {
+  try {
+    const row = await ProfitShareInstallment.findByPk(toInt(req.params.id, null));
+    if (!row) {
+      return res.status(404).json({ ok: false, message: 'Data tidak ditemukan.' });
+    }
+    const partner = await ProfitSharePartner.findByPk(row.partnerId);
+    if (!partner || !assertOwnedByBusiness(partner, req)) {
+      return res.status(404).json({ ok: false, message: 'Data tidak ditemukan.' });
+    }
+    await row.destroy();
+    return res.json({ ok: true, message: 'Cicilan dihapus.' });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Gagal menghapus cicilan.' });
   }
 });
 
