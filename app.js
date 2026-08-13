@@ -1140,6 +1140,14 @@ function businessWhere(req, extraWhere = {}) {
   return { ...extraWhere, businessId: req.businessId };
 }
 
+// Like businessWhere, but keeps owner-role users visible even when a specific
+// business is selected — owner accounts have businessId NULL by design (they
+// span all businesses), so a plain businessId filter would hide them.
+function businessOrOwnerWhere(req, extraWhere = {}) {
+  if (req.businessId === null || req.businessId === undefined) return extraWhere;
+  return { ...extraWhere, [Op.or]: [{ businessId: req.businessId }, { role: 'owner' }] };
+}
+
 function assertOwnedByBusiness(row, req) {
   if (!row) return false;
   if (req.businessId === null || req.businessId === undefined) return true;
@@ -3081,7 +3089,7 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/users', ...authRequired, ownerOnly, async (req, res) => {
   try {
-    const where = businessWhere(req, searchWhere(req.query.search, ['fullName', 'username', 'jobTitle']));
+    const where = businessOrOwnerWhere(req, searchWhere(req.query.search, ['fullName', 'username', 'jobTitle']));
     const rows = await User.findAll({ where, order: [['createdAt', 'DESC']], include: [Shift] });
     return res.json({ ok: true, data: rows.map(serializeUser) });
   } catch (error) {
@@ -3604,7 +3612,7 @@ function salaryScopeWhere(req) {
   if (requester.role === 'leader') {
     return businessWhere(req, { role: { [Op.ne]: 'owner' }, active: true });
   }
-  return businessWhere(req, { active: true });
+  return businessOrOwnerWhere(req, { active: true });
 }
 
 async function computeSalaryReport(weekStart, scopeWhere) {
