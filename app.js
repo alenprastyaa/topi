@@ -2597,7 +2597,7 @@ async function resetDatabase(businessId) {
     'DELETE FROM `salary_payments` WHERE `user_id` IN (SELECT `id` FROM `users` WHERE `business_id` = :businessId)',
     { replacements: { businessId } },
   );
-  const scopedTables = ['sales', 'marketing_expenses', 'operational_expenses', 'stores', 'products', 'shifts', 'attendance_settings'];
+  const scopedTables = ['sales', 'marketing_expenses', 'operational_expenses', 'stores', 'products', 'shifts', 'attendance_settings', 'profit_share_partners'];
   for (const tableName of scopedTables) {
     await sequelize.query(`DELETE FROM \`${tableName}\` WHERE \`business_id\` = :businessId`, { replacements: { businessId } });
   }
