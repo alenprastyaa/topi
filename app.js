@@ -1154,6 +1154,12 @@ function assertOwnedByBusiness(row, req) {
   return row.businessId === req.businessId;
 }
 
+// Owner accounts are global (businessId NULL) and remain visible in every
+// business view, so user mutations must treat them as part of the same scope.
+function assertUserInBusinessScope(row, req) {
+  return Boolean(row) && (row.role === 'owner' || assertOwnedByBusiness(row, req));
+}
+
 function requireConcreteBusiness(req, res) {
   if (req.businessId === null || req.businessId === undefined) {
     res.status(400).json({ ok: false, message: 'Pilih bisnis terlebih dahulu. Data tidak bisa disimpan pada tampilan "Semua Bisnis".' });
@@ -3143,7 +3149,7 @@ app.post('/api/users', ...authRequired, ownerOnly, async (req, res) => {
 app.put('/api/users/:id', ...authRequired, ownerOnly, async (req, res) => {
   try {
     const row = await User.findByPk(req.params.id);
-    if (!row || !assertOwnedByBusiness(row, req)) {
+    if (!assertUserInBusinessScope(row, req)) {
       return res.status(404).json({ ok: false, message: 'Data tidak ditemukan.' });
     }
     if (req.body.username) {
@@ -3192,7 +3198,7 @@ app.delete('/api/users/:id', ...authRequired, ownerOnly, async (req, res) => {
       return res.status(400).json({ ok: false, message: 'Akun sendiri tidak bisa dihapus.' });
     }
     const row = await User.findByPk(req.params.id);
-    if (!row || !assertOwnedByBusiness(row, req)) {
+    if (!assertUserInBusinessScope(row, req)) {
       return res.status(404).json({ ok: false, message: 'Data tidak ditemukan.' });
     }
     await row.destroy();
@@ -3210,7 +3216,7 @@ app.post('/api/users/bulk-delete', ...authRequired, ownerOnly, async (req, res) 
     if (!ids.length) {
       return res.status(400).json({ ok: false, message: 'Pilih minimal satu karyawan untuk dihapus.' });
     }
-    const deleted = await User.destroy({ where: businessWhere(req, { id: { [Op.in]: ids } }) });
+    const deleted = await User.destroy({ where: businessOrOwnerWhere(req, { id: { [Op.in]: ids } }) });
     return res.json({ ok: true, message: `${deleted} karyawan berhasil dihapus.`, data: { deleted } });
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Gagal menghapus karyawan terpilih.' });
