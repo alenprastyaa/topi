@@ -906,7 +906,7 @@ const serializeBusiness = (row) => ({
 
 const serializeUser = (user, salarySetting = null) => ({
   id: user.id,
-  businessId: user.businessId || null,
+  businessId: salarySetting?.businessId || user.businessId || null,
   username: user.username,
   fullName: user.fullName,
   role: user.role,
@@ -1586,10 +1586,13 @@ async function computeGajiTotalForPeriod(from, to, businessId = null) {
   const userWhere = (businessId === null || businessId === undefined)
     ? { active: true }
     : { active: true, [Op.or]: [{ businessId }, { role: 'owner' }] };
-  const users = await User.findAll({ where: userWhere });
+  const candidateUsers = await User.findAll({ where: userWhere });
+  const ownerSettings = await ownerSalarySettingsByUser(candidateUsers, businessId);
+  const users = (businessId === null || businessId === undefined)
+    ? candidateUsers
+    : candidateUsers.filter((user) => user.role !== 'owner' || ownerSettings.has(user.id));
   const attendanceRows = await Attendance.findAll({ where: attendanceWhere });
   const payments = await SalaryPayment.findAll({ where: paymentWhere });
-  const ownerSettings = await ownerSalarySettingsByUser(users, businessId);
 
   const attendanceByUser = new Map();
   for (const row of attendanceRows) {
@@ -3170,7 +3173,10 @@ app.get('/api/users', ...authRequired, ownerOnly, async (req, res) => {
     const where = businessOrOwnerWhere(req, searchWhere(req.query.search, ['fullName', 'username', 'jobTitle']));
     const rows = await User.findAll({ where, order: [['createdAt', 'DESC']], include: [Shift] });
     const ownerSettings = await ownerSalarySettingsByUser(rows, req.businessId);
-    return res.json({ ok: true, data: rows.map((row) => serializeUser(row, ownerSettings.get(row.id))) });
+    const scopedRows = (req.businessId === null || req.businessId === undefined)
+      ? rows
+      : rows.filter((row) => row.role !== 'owner' || ownerSettings.has(row.id));
+    return res.json({ ok: true, data: scopedRows.map((row) => serializeUser(row, ownerSettings.get(row.id))) });
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Gagal memuat karyawan.' });
   }
@@ -3186,7 +3192,15 @@ app.post('/api/users', ...authRequired, ownerOnly, async (req, res) => {
     }
     const role = ROLES.includes(req.body.role) ? req.body.role : 'karyawan';
     let businessId = null;
-    if (role !== 'owner') {
+    let salaryBusinessId = null;
+    if (role === 'owner') {
+      salaryBusinessId = req.body.businessId !== undefined
+        ? toInt(req.body.businessId, null)
+        : req.businessId;
+      if (!salaryBusinessId || !(await Business.findByPk(salaryBusinessId))) {
+        return res.status(400).json({ ok: false, message: 'Bisnis gaji owner wajib dipilih.' });
+      }
+    } else {
       businessId = req.body.businessId !== undefined ? toInt(req.body.businessId, null) : req.businessId;
       if (!businessId) {
         return res.status(400).json({ ok: false, message: 'Bisnis wajib dipilih untuk role selain owner.' });
@@ -3214,8 +3228,8 @@ app.post('/api/users', ...authRequired, ownerOnly, async (req, res) => {
     });
     const output = await User.findByPk(row.id, { include: [Shift] });
     let salarySetting = null;
-    if (role === 'owner' && req.businessId !== null && req.businessId !== undefined) {
-      salarySetting = await upsertOwnerSalarySetting(output, req.businessId, req.body);
+    if (role === 'owner') {
+      salarySetting = await upsertOwnerSalarySetting(output, salaryBusinessId, req.body);
     }
     return res.status(201).json({ ok: true, data: serializeUser(output, salarySetting) });
   } catch (error) {
@@ -3246,8 +3260,14 @@ app.put('/api/users/:id', ...authRequired, ownerOnly, async (req, res) => {
     }
     row.fullName = toText(req.body.fullName || row.fullName);
     row.role = ROLES.includes(req.body.role) ? req.body.role : row.role;
+    let salaryBusinessId = null;
     if (row.role === 'owner') {
-      if (!requireConcreteBusiness(req, res)) return;
+      salaryBusinessId = req.body.businessId !== undefined
+        ? toInt(req.body.businessId, null)
+        : req.businessId;
+      if (!salaryBusinessId || !(await Business.findByPk(salaryBusinessId))) {
+        return res.status(400).json({ ok: false, message: 'Bisnis gaji owner wajib dipilih.' });
+      }
       row.businessId = null;
     } else if (req.body.businessId !== undefined) {
       row.businessId = toInt(req.body.businessId, row.businessId);
@@ -3267,7 +3287,7 @@ app.put('/api/users/:id', ...authRequired, ownerOnly, async (req, res) => {
     await row.save();
     const output = await User.findByPk(row.id, { include: [Shift] });
     const salarySetting = row.role === 'owner'
-      ? await upsertOwnerSalarySetting(output, req.businessId, req.body)
+      ? await upsertOwnerSalarySetting(output, salaryBusinessId, req.body)
       : null;
     return res.json({ ok: true, data: serializeUser(output, salarySetting) });
   } catch (error) {
@@ -3706,7 +3726,9 @@ function salaryScopeWhere(req) {
 
 async function computeSalaryReport(weekStart, scopeWhere, businessId) {
   const { start, end } = weekBounds(weekStart);
-  const users = await User.findAll({ where: scopeWhere, order: [['fullName', 'ASC']] });
+  const candidateUsers = await User.findAll({ where: scopeWhere, order: [['fullName', 'ASC']] });
+  const ownerSettings = await ownerSalarySettingsByUser(candidateUsers, businessId);
+  const users = candidateUsers.filter((user) => user.role !== 'owner' || ownerSettings.has(user.id));
   const attendanceRows = await Attendance.findAll({
     where: { workDate: { [Op.between]: [start, end] } },
     include: [{ model: User }],
@@ -3723,7 +3745,6 @@ async function computeSalaryReport(weekStart, scopeWhere, businessId) {
     where: { weekStart, businessId, userId: { [Op.in]: users.map((user) => user.id) } },
   });
   const paymentsByUser = new Map(payments.map((payment) => [payment.userId, payment]));
-  const ownerSettings = await ownerSalarySettingsByUser(users, businessId);
   const data = users.map((user) => {
     const records = grouped.get(user.id) || [];
     const presentDays = records.filter((record) => record.status === 'hadir').length;
@@ -3769,6 +3790,11 @@ app.post('/api/reports/salary/adjust', ...authRequired, ownerOrLeader, async (re
     if (target.role === 'owner' && req.user.role !== 'owner') {
       return res.status(403).json({ ok: false, message: 'Gaji owner tidak bisa diubah oleh kepala toko.' });
     }
+    if (target.role === 'owner' && !(await OwnerSalarySetting.findOne({
+      where: { userId: target.id, businessId: req.businessId },
+    }))) {
+      return res.status(404).json({ ok: false, message: 'Owner tidak ditugaskan ke laporan gaji bisnis ini.' });
+    }
     const weekStart = sundayOfWeek(toText(req.body.weekStart) || jakartaDate());
     const payment = await findOrCreateSalaryPayment(userId, weekStart, req.businessId);
     payment.bonus = money(req.body.bonus);
@@ -3795,6 +3821,11 @@ app.post('/api/reports/salary/mark-paid', ...authRequired, ownerOrLeader, async 
     if (target.role === 'owner' && req.user.role !== 'owner') {
       return res.status(403).json({ ok: false, message: 'Gaji owner tidak bisa diubah oleh kepala toko.' });
     }
+    if (target.role === 'owner' && !(await OwnerSalarySetting.findOne({
+      where: { userId: target.id, businessId: req.businessId },
+    }))) {
+      return res.status(404).json({ ok: false, message: 'Owner tidak ditugaskan ke laporan gaji bisnis ini.' });
+    }
     const weekStart = sundayOfWeek(toText(req.body.weekStart) || jakartaDate());
     const paid = Boolean(req.body.paid);
     const payment = await findOrCreateSalaryPayment(userId, weekStart, req.businessId);
@@ -3813,7 +3844,9 @@ app.post('/api/reports/salary/mark-all-paid', ...authRequired, ownerOrLeader, as
     const weekStart = sundayOfWeek(toText(req.body.weekStart) || jakartaDate());
     const paid = req.body.paid === undefined ? true : Boolean(req.body.paid);
     const scopeWhere = salaryScopeWhere(req) || { active: true };
-    const users = await User.findAll({ where: scopeWhere });
+    const candidateUsers = await User.findAll({ where: scopeWhere });
+    const ownerSettings = await ownerSalarySettingsByUser(candidateUsers, req.businessId);
+    const users = candidateUsers.filter((user) => user.role !== 'owner' || ownerSettings.has(user.id));
     for (const user of users) {
       const payment = await findOrCreateSalaryPayment(user.id, weekStart, req.businessId);
       payment.paid = paid;
@@ -4371,19 +4404,75 @@ async function migrateSalaryBusinessScoping() {
     });
   }
 
+  // Accounts explicitly named for one business must only appear in that
+  // business's salary report. Earlier versions made every owner global and
+  // copied its salary profile to every business.
+  const businessByOwnerPrefix = new Map([
+    ['hatpro.', businesses.find((business) => business.slug === 'sds-headwear')],
+    ['hivvy.', businesses.find((business) => business.slug === 'sds-fashion')],
+  ]);
   const owners = await User.findAll({ where: { role: 'owner' } });
   for (const owner of owners) {
-    for (const business of businesses) {
-      await OwnerSalarySetting.findOrCreate({
-        where: { userId: owner.id, businessId: business.id },
-        defaults: {
-          userId: owner.id,
-          businessId: business.id,
-          dailyWage: owner.dailyWage || 0,
-          mealAllowance: owner.mealAllowance || 0,
-          overtimeRatePerHour: owner.overtimeRatePerHour || 0,
-        },
+    const username = String(owner.username || '').toLowerCase();
+    const matchedEntry = [...businessByOwnerPrefix.entries()]
+      .find(([prefix, business]) => business && username.startsWith(prefix));
+    if (!matchedEntry) continue;
+
+    const targetBusiness = matchedEntry[1];
+    const settings = await OwnerSalarySetting.findAll({
+      where: { userId: owner.id },
+      order: [['updatedAt', 'DESC']],
+    });
+    const source = settings.find((setting) => (
+      setting.dailyWage || setting.mealAllowance || setting.overtimeRatePerHour
+    )) || settings[0] || owner;
+    let target = settings.find((setting) => setting.businessId === targetBusiness.id);
+    if (!target) {
+      target = await OwnerSalarySetting.create({
+        userId: owner.id,
+        businessId: targetBusiness.id,
+        dailyWage: source.dailyWage || 0,
+        mealAllowance: source.mealAllowance || 0,
+        overtimeRatePerHour: source.overtimeRatePerHour || 0,
       });
+    } else if (
+      !(target.dailyWage || target.mealAllowance || target.overtimeRatePerHour)
+      && (source.dailyWage || source.mealAllowance || source.overtimeRatePerHour)
+    ) {
+      target.dailyWage = source.dailyWage || 0;
+      target.mealAllowance = source.mealAllowance || 0;
+      target.overtimeRatePerHour = source.overtimeRatePerHour || 0;
+      await target.save();
+    }
+    await OwnerSalarySetting.destroy({
+      where: { userId: owner.id, businessId: { [Op.ne]: targetBusiness.id } },
+    });
+
+    const misplacedPayments = await SalaryPayment.findAll({
+      where: { userId: owner.id, businessId: { [Op.ne]: targetBusiness.id } },
+    });
+    for (const misplaced of misplacedPayments) {
+      const targetPayment = await SalaryPayment.findOne({
+        where: { userId: owner.id, weekStart: misplaced.weekStart, businessId: targetBusiness.id },
+      });
+      if (!targetPayment) {
+        misplaced.businessId = targetBusiness.id;
+        await misplaced.save();
+      } else {
+        const targetScore = (targetPayment.bonus || 0) + (targetPayment.thr || 0)
+          + (targetPayment.deduction || 0) + (targetPayment.paid ? 1 : 0);
+        const misplacedScore = (misplaced.bonus || 0) + (misplaced.thr || 0)
+          + (misplaced.deduction || 0) + (misplaced.paid ? 1 : 0);
+        if (misplacedScore > targetScore) {
+          targetPayment.bonus = misplaced.bonus;
+          targetPayment.thr = misplaced.thr;
+          targetPayment.deduction = misplaced.deduction;
+          targetPayment.paid = misplaced.paid;
+          targetPayment.paidAt = misplaced.paidAt;
+          await targetPayment.save();
+        }
+        await misplaced.destroy();
+      }
     }
   }
 }
