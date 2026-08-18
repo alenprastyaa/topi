@@ -1660,7 +1660,10 @@ async function buildDashboard(from, to, { platform = '', storeName = '', sku = '
 }
 
 async function migrateOwnerRole() {
-  await sequelize.query("UPDATE `users` SET `role` = 'owner' WHERE `role` = 'admin'");
+  // Only the original administrator account used the legacy `admin` role as
+  // the system owner. Converting every admin on each boot promotes real store
+  // admins into owners and incorrectly puts them in the owner salary report.
+  await sequelize.query("UPDATE `users` SET `role` = 'owner' WHERE `username` = 'admin' AND `role` = 'admin'");
 }
 
 async function createInitialAdmin() {
