@@ -1399,7 +1399,7 @@
                 </button>
               </div>
               <template v-if="salaryReportOwner.length">
-                <h4 class="text-sm font-semibold uppercase tracking-[0.15em] text-slate-400">Laporan Gaji Owner</h4>
+                <h4 class="text-sm font-semibold uppercase tracking-[0.15em] text-slate-400">Laporan Gaji Owner · {{ businesses.find(b => String(b.id) === String(currentBusinessId))?.name || 'Bisnis Aktif' }}</h4>
                 <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900">
                   <table v-sortable-table class="min-w-full text-left text-sm">
                     <thead class="border-b border-slate-800 text-slate-400">
@@ -4381,7 +4381,7 @@
                 { key: 'workShift', label: 'Shift Kerja (label)', type: 'text' },
                 { key: 'shiftId', label: 'Shift Kerja (Dinamis)', type: 'select', options: [{ label: 'Standar (ikut jam kerja umum)', value: null }, ...this.shifts.map((shift) => ({ label: shift.name, value: shift.id }))] },
                 { key: 'phone', label: 'No. Telepon', type: 'text' },
-                { key: 'dailyWage', label: 'Gaji Harian', type: 'number' },
+                { key: 'dailyWage', label: 'Gaji Harian', type: 'number', help: 'Untuk Owner, nominal ini khusus untuk bisnis yang sedang aktif.' },
                 { key: 'mealAllowance', label: 'Uang Makan', type: 'number' },
                 { key: 'overtimeRatePerHour', label: 'Tarif Lembur per Jam', type: 'number', help: 'Dikalikan otomatis dengan jam lembur dari absensi (Minggu/hari libur, atau lembur yang disetujui).' },
                 { key: 'active', label: 'Status Akun', type: 'select', options: [{ label: 'Aktif', value: true }, { label: 'Nonaktif', value: false }] },

@@ -686,6 +686,10 @@ const Shift = sequelize.define('Shift', {
 });
 
 const SalaryPayment = sequelize.define('SalaryPayment', {
+  businessId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  },
   weekStart: {
     type: DataTypes.DATEONLY,
     allowNull: false,
@@ -716,8 +720,39 @@ const SalaryPayment = sequelize.define('SalaryPayment', {
   },
 }, {
   tableName: 'salary_payments',
+});
+
+// Owner accounts are global so they can access every business, but their salary
+// components belong to a specific business. Keeping these values in a separate
+// table prevents an edit in one store from overwriting the other store.
+const OwnerSalarySetting = sequelize.define('OwnerSalarySetting', {
+  businessId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  },
+  userId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  },
+  dailyWage: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+  },
+  mealAllowance: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+  },
+  overtimeRatePerHour: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+  },
+}, {
+  tableName: 'owner_salary_settings',
   indexes: [
-    { unique: true, fields: ['user_id', 'week_start'] },
+    { unique: true, fields: ['business_id', 'user_id'] },
   ],
 });
 
@@ -849,6 +884,10 @@ Shift.hasMany(User, { foreignKey: 'shiftId' });
 User.belongsTo(Shift, { foreignKey: 'shiftId' });
 User.hasMany(SalaryPayment, { foreignKey: 'userId' });
 SalaryPayment.belongsTo(User, { foreignKey: 'userId' });
+User.hasMany(OwnerSalarySetting, { foreignKey: 'userId' });
+OwnerSalarySetting.belongsTo(User, { foreignKey: 'userId' });
+Business.hasMany(OwnerSalarySetting, { foreignKey: 'businessId' });
+OwnerSalarySetting.belongsTo(Business, { foreignKey: 'businessId' });
 
 async function getAttendanceSettings(businessId) {
   let row = await AttendanceSetting.findOne({ where: { businessId }, order: [['id', 'ASC']] });
@@ -865,7 +904,7 @@ const serializeBusiness = (row) => ({
   active: Boolean(row.active),
 });
 
-const serializeUser = (user) => ({
+const serializeUser = (user, salarySetting = null) => ({
   id: user.id,
   businessId: user.businessId || null,
   username: user.username,
@@ -874,9 +913,9 @@ const serializeUser = (user) => ({
   jobTitle: user.jobTitle || '',
   workShift: user.workShift || '',
   phone: user.phone || '',
-  dailyWage: user.dailyWage || 0,
-  mealAllowance: user.mealAllowance || 0,
-  overtimeRatePerHour: user.overtimeRatePerHour || 0,
+  dailyWage: salarySetting ? (salarySetting.dailyWage || 0) : (user.dailyWage || 0),
+  mealAllowance: salarySetting ? (salarySetting.mealAllowance || 0) : (user.mealAllowance || 0),
+  overtimeRatePerHour: salarySetting ? (salarySetting.overtimeRatePerHour || 0) : (user.overtimeRatePerHour || 0),
   shiftId: user.shiftId || null,
   shiftName: user.Shift ? user.Shift.name : null,
   shiftCheckInStart: user.Shift ? user.Shift.checkInStart : null,
@@ -892,6 +931,33 @@ const serializeUser = (user) => ({
   createdAt: user.createdAt,
   updatedAt: user.updatedAt,
 });
+
+async function ownerSalarySettingsByUser(users, businessId) {
+  const ownerIds = users.filter((user) => user.role === 'owner').map((user) => user.id);
+  if (!ownerIds.length || businessId === null || businessId === undefined) return new Map();
+  const rows = await OwnerSalarySetting.findAll({
+    where: { businessId, userId: { [Op.in]: ownerIds } },
+  });
+  return new Map(rows.map((row) => [row.userId, row]));
+}
+
+async function upsertOwnerSalarySetting(user, businessId, values = {}) {
+  const [row] = await OwnerSalarySetting.findOrCreate({
+    where: { userId: user.id, businessId },
+    defaults: {
+      userId: user.id,
+      businessId,
+      dailyWage: user.dailyWage || 0,
+      mealAllowance: user.mealAllowance || 0,
+      overtimeRatePerHour: user.overtimeRatePerHour || 0,
+    },
+  });
+  row.dailyWage = money(values.dailyWage);
+  row.mealAllowance = money(values.mealAllowance);
+  row.overtimeRatePerHour = money(values.overtimeRatePerHour);
+  await row.save();
+  return row;
+}
 
 const serializePlatform = (row) => ({
   id: row.id,
@@ -1170,10 +1236,11 @@ function requireConcreteBusiness(req, res) {
 
 const authRequired = [auth, loadCurrentUser, resolveBusiness];
 
-function buildSalaryRow(user, presentDays, attendanceRecords, paymentRow) {
-  const dailyWage = user.dailyWage || 0;
-  const mealAllowance = user.mealAllowance || 0;
-  const overtimeRatePerHour = user.overtimeRatePerHour || 0;
+function buildSalaryRow(user, presentDays, attendanceRecords, paymentRow, salarySetting = null) {
+  const salarySource = salarySetting || user;
+  const dailyWage = salarySource.dailyWage || 0;
+  const mealAllowance = salarySource.mealAllowance || 0;
+  const overtimeRatePerHour = salarySource.overtimeRatePerHour || 0;
   const overtimeHours = (attendanceRecords || []).reduce((sum, record) => sum + (record.overtimeHours || 0), 0);
   const overtimePay = Math.round(overtimeHours * overtimeRatePerHour);
   const bonus = paymentRow?.bonus || 0;
@@ -1184,7 +1251,7 @@ function buildSalaryRow(user, presentDays, attendanceRecords, paymentRow) {
   const gross = salaryBase + mealTotal + overtimePay + bonus + thr;
   const net = gross - deduction;
   return {
-    user: serializeUser(user),
+    user: serializeUser(user, salarySetting),
     presentDays,
     dailyWage,
     mealAllowance,
@@ -1512,11 +1579,17 @@ function dateWhere(field, from, to) {
 
 async function computeGajiTotalForPeriod(from, to, businessId = null) {
   const attendanceWhere = dateWhere('workDate', from, to);
-  const paymentWhere = dateWhere('weekStart', from, to);
-  const userWhere = { active: true, ...((businessId === null || businessId === undefined) ? {} : { businessId }) };
+  const paymentWhere = {
+    ...dateWhere('weekStart', from, to),
+    ...((businessId === null || businessId === undefined) ? {} : { businessId }),
+  };
+  const userWhere = (businessId === null || businessId === undefined)
+    ? { active: true }
+    : { active: true, [Op.or]: [{ businessId }, { role: 'owner' }] };
   const users = await User.findAll({ where: userWhere });
   const attendanceRows = await Attendance.findAll({ where: attendanceWhere });
   const payments = await SalaryPayment.findAll({ where: paymentWhere });
+  const ownerSettings = await ownerSalarySettingsByUser(users, businessId);
 
   const attendanceByUser = new Map();
   for (const row of attendanceRows) {
@@ -1531,12 +1604,13 @@ async function computeGajiTotalForPeriod(from, to, businessId = null) {
 
   let total = 0;
   for (const user of users) {
+    const salarySource = ownerSettings.get(user.id) || user;
     const records = attendanceByUser.get(user.id) || [];
     const presentDays = records.filter((record) => record.status === 'hadir').length;
     const overtimeHours = records.reduce((sum, record) => sum + (record.overtimeHours || 0), 0);
-    const overtimePay = Math.round(overtimeHours * (user.overtimeRatePerHour || 0));
-    const salaryBase = presentDays * (user.dailyWage || 0);
-    const mealTotal = presentDays * (user.mealAllowance || 0);
+    const overtimePay = Math.round(overtimeHours * (salarySource.overtimeRatePerHour || 0));
+    const salaryBase = presentDays * (salarySource.dailyWage || 0);
+    const mealTotal = presentDays * (salarySource.mealAllowance || 0);
     const userPayments = paymentsByUser.get(user.id) || [];
     const bonus = userPayments.reduce((sum, payment) => sum + (payment.bonus || 0), 0);
     const thr = userPayments.reduce((sum, payment) => sum + (payment.thr || 0), 0);
@@ -2599,10 +2673,8 @@ async function resetDatabase(businessId) {
     'DELETE FROM `attendance` WHERE `user_id` IN (SELECT `id` FROM `users` WHERE `business_id` = :businessId)',
     { replacements: { businessId } },
   );
-  await sequelize.query(
-    'DELETE FROM `salary_payments` WHERE `user_id` IN (SELECT `id` FROM `users` WHERE `business_id` = :businessId)',
-    { replacements: { businessId } },
-  );
+  await SalaryPayment.destroy({ where: { businessId } });
+  await OwnerSalarySetting.destroy({ where: { businessId } });
   const scopedTables = ['sales', 'marketing_expenses', 'operational_expenses', 'stores', 'products', 'shifts', 'attendance_settings', 'profit_share_partners'];
   for (const tableName of scopedTables) {
     await sequelize.query(`DELETE FROM \`${tableName}\` WHERE \`business_id\` = :businessId`, { replacements: { businessId } });
@@ -3097,7 +3169,8 @@ app.get('/api/users', ...authRequired, ownerOnly, async (req, res) => {
   try {
     const where = businessOrOwnerWhere(req, searchWhere(req.query.search, ['fullName', 'username', 'jobTitle']));
     const rows = await User.findAll({ where, order: [['createdAt', 'DESC']], include: [Shift] });
-    return res.json({ ok: true, data: rows.map(serializeUser) });
+    const ownerSettings = await ownerSalarySettingsByUser(rows, req.businessId);
+    return res.json({ ok: true, data: rows.map((row) => serializeUser(row, ownerSettings.get(row.id))) });
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Gagal memuat karyawan.' });
   }
@@ -3133,14 +3206,18 @@ app.post('/api/users', ...authRequired, ownerOnly, async (req, res) => {
       jobTitle: toText(req.body.jobTitle),
       workShift: toText(req.body.workShift),
       phone: toText(req.body.phone),
-      dailyWage: money(req.body.dailyWage),
-      mealAllowance: money(req.body.mealAllowance),
-      overtimeRatePerHour: money(req.body.overtimeRatePerHour),
+      dailyWage: role === 'owner' ? 0 : money(req.body.dailyWage),
+      mealAllowance: role === 'owner' ? 0 : money(req.body.mealAllowance),
+      overtimeRatePerHour: role === 'owner' ? 0 : money(req.body.overtimeRatePerHour),
       shiftId: req.body.shiftId ? toInt(req.body.shiftId, null) : null,
       active: req.body.active === undefined ? true : Boolean(req.body.active),
     });
     const output = await User.findByPk(row.id, { include: [Shift] });
-    return res.status(201).json({ ok: true, data: serializeUser(output) });
+    let salarySetting = null;
+    if (role === 'owner' && req.businessId !== null && req.businessId !== undefined) {
+      salarySetting = await upsertOwnerSalarySetting(output, req.businessId, req.body);
+    }
+    return res.status(201).json({ ok: true, data: serializeUser(output, salarySetting) });
   } catch (error) {
     return res.status(400).json({ ok: false, message: error.message || 'Gagal menambah karyawan.' });
   }
@@ -3170,6 +3247,7 @@ app.put('/api/users/:id', ...authRequired, ownerOnly, async (req, res) => {
     row.fullName = toText(req.body.fullName || row.fullName);
     row.role = ROLES.includes(req.body.role) ? req.body.role : row.role;
     if (row.role === 'owner') {
+      if (!requireConcreteBusiness(req, res)) return;
       row.businessId = null;
     } else if (req.body.businessId !== undefined) {
       row.businessId = toInt(req.body.businessId, row.businessId);
@@ -3177,16 +3255,21 @@ app.put('/api/users/:id', ...authRequired, ownerOnly, async (req, res) => {
     row.jobTitle = toText(req.body.jobTitle);
     row.workShift = toText(req.body.workShift);
     row.phone = toText(req.body.phone);
-    row.dailyWage = money(req.body.dailyWage);
-    row.mealAllowance = money(req.body.mealAllowance);
-    row.overtimeRatePerHour = money(req.body.overtimeRatePerHour);
+    if (row.role !== 'owner') {
+      row.dailyWage = money(req.body.dailyWage);
+      row.mealAllowance = money(req.body.mealAllowance);
+      row.overtimeRatePerHour = money(req.body.overtimeRatePerHour);
+    }
     row.shiftId = req.body.shiftId ? toInt(req.body.shiftId, null) : null;
     if (req.body.active !== undefined) {
       row.active = Boolean(req.body.active);
     }
     await row.save();
     const output = await User.findByPk(row.id, { include: [Shift] });
-    return res.json({ ok: true, data: serializeUser(output) });
+    const salarySetting = row.role === 'owner'
+      ? await upsertOwnerSalarySetting(output, req.businessId, req.body)
+      : null;
+    return res.json({ ok: true, data: serializeUser(output, salarySetting) });
   } catch (error) {
     return res.status(400).json({ ok: false, message: error.message || 'Gagal memperbarui karyawan.' });
   }
@@ -3621,7 +3704,7 @@ function salaryScopeWhere(req) {
   return businessOrOwnerWhere(req, { active: true });
 }
 
-async function computeSalaryReport(weekStart, scopeWhere) {
+async function computeSalaryReport(weekStart, scopeWhere, businessId) {
   const { start, end } = weekBounds(weekStart);
   const users = await User.findAll({ where: scopeWhere, order: [['fullName', 'ASC']] });
   const attendanceRows = await Attendance.findAll({
@@ -3637,25 +3720,35 @@ async function computeSalaryReport(weekStart, scopeWhere) {
     grouped.get(key).push(row);
   }
   const payments = await SalaryPayment.findAll({
-    where: { weekStart, userId: { [Op.in]: users.map((user) => user.id) } },
+    where: { weekStart, businessId, userId: { [Op.in]: users.map((user) => user.id) } },
   });
   const paymentsByUser = new Map(payments.map((payment) => [payment.userId, payment]));
+  const ownerSettings = await ownerSalarySettingsByUser(users, businessId);
   const data = users.map((user) => {
     const records = grouped.get(user.id) || [];
     const presentDays = records.filter((record) => record.status === 'hadir').length;
-    return buildSalaryRow(user, presentDays, records, paymentsByUser.get(user.id));
+    return buildSalaryRow(user, presentDays, records, paymentsByUser.get(user.id), ownerSettings.get(user.id));
   });
   return { data, start, end };
 }
 
+async function findOrCreateSalaryPayment(userId, weekStart, businessId) {
+  const [payment] = await SalaryPayment.findOrCreate({
+    where: { userId, weekStart, businessId },
+    defaults: { userId, weekStart, businessId, paid: false },
+  });
+  return payment;
+}
+
 app.get('/api/reports/salary', ...authRequired, async (req, res) => {
   try {
+    if (!requireConcreteBusiness(req, res)) return;
     const scopeWhere = salaryScopeWhere(req);
     if (!scopeWhere) {
       return res.status(403).json({ ok: false, message: 'Akses laporan gaji tidak tersedia untuk role Anda.' });
     }
     const weekStart = sundayOfWeek(toText(req.query.week) || jakartaDate());
-    const { data, start, end } = await computeSalaryReport(weekStart, scopeWhere);
+    const { data, start, end } = await computeSalaryReport(weekStart, scopeWhere, req.businessId);
     return res.json({ ok: true, data, period: { weekStart, start, end } });
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Gagal memuat laporan gaji.' });
@@ -3664,22 +3757,20 @@ app.get('/api/reports/salary', ...authRequired, async (req, res) => {
 
 app.post('/api/reports/salary/adjust', ...authRequired, ownerOrLeader, async (req, res) => {
   try {
+    if (!requireConcreteBusiness(req, res)) return;
     const userId = toInt(req.body.userId, null);
     if (!userId) {
       return res.status(400).json({ ok: false, message: 'Karyawan tidak valid.' });
     }
     const target = await User.findByPk(userId);
-    if (!target || !assertOwnedByBusiness(target, req)) {
+    if (!target || !assertUserInBusinessScope(target, req)) {
       return res.status(404).json({ ok: false, message: 'Karyawan tidak ditemukan.' });
     }
     if (target.role === 'owner' && req.user.role !== 'owner') {
       return res.status(403).json({ ok: false, message: 'Gaji owner tidak bisa diubah oleh kepala toko.' });
     }
     const weekStart = sundayOfWeek(toText(req.body.weekStart) || jakartaDate());
-    let payment = await SalaryPayment.findOne({ where: { userId, weekStart } });
-    if (!payment) {
-      payment = await SalaryPayment.create({ userId, weekStart, paid: false });
-    }
+    const payment = await findOrCreateSalaryPayment(userId, weekStart, req.businessId);
     payment.bonus = money(req.body.bonus);
     payment.thr = money(req.body.thr);
     payment.deduction = money(req.body.deduction);
@@ -3692,12 +3783,13 @@ app.post('/api/reports/salary/adjust', ...authRequired, ownerOrLeader, async (re
 
 app.post('/api/reports/salary/mark-paid', ...authRequired, ownerOrLeader, async (req, res) => {
   try {
+    if (!requireConcreteBusiness(req, res)) return;
     const userId = toInt(req.body.userId, null);
     if (!userId) {
       return res.status(400).json({ ok: false, message: 'Karyawan tidak valid.' });
     }
     const target = await User.findByPk(userId);
-    if (!target || !assertOwnedByBusiness(target, req)) {
+    if (!target || !assertUserInBusinessScope(target, req)) {
       return res.status(404).json({ ok: false, message: 'Karyawan tidak ditemukan.' });
     }
     if (target.role === 'owner' && req.user.role !== 'owner') {
@@ -3705,10 +3797,7 @@ app.post('/api/reports/salary/mark-paid', ...authRequired, ownerOrLeader, async 
     }
     const weekStart = sundayOfWeek(toText(req.body.weekStart) || jakartaDate());
     const paid = Boolean(req.body.paid);
-    let payment = await SalaryPayment.findOne({ where: { userId, weekStart } });
-    if (!payment) {
-      payment = await SalaryPayment.create({ userId, weekStart, paid: false });
-    }
+    const payment = await findOrCreateSalaryPayment(userId, weekStart, req.businessId);
     payment.paid = paid;
     payment.paidAt = paid ? now() : null;
     await payment.save();
@@ -3720,15 +3809,13 @@ app.post('/api/reports/salary/mark-paid', ...authRequired, ownerOrLeader, async 
 
 app.post('/api/reports/salary/mark-all-paid', ...authRequired, ownerOrLeader, async (req, res) => {
   try {
+    if (!requireConcreteBusiness(req, res)) return;
     const weekStart = sundayOfWeek(toText(req.body.weekStart) || jakartaDate());
     const paid = req.body.paid === undefined ? true : Boolean(req.body.paid);
     const scopeWhere = salaryScopeWhere(req) || { active: true };
     const users = await User.findAll({ where: scopeWhere });
     for (const user of users) {
-      let payment = await SalaryPayment.findOne({ where: { userId: user.id, weekStart } });
-      if (!payment) {
-        payment = await SalaryPayment.create({ userId: user.id, weekStart, paid: false });
-      }
+      const payment = await findOrCreateSalaryPayment(user.id, weekStart, req.businessId);
       payment.paid = paid;
       payment.paidAt = paid ? now() : null;
       await payment.save();
@@ -4198,6 +4285,109 @@ async function migrateBusinessScoping() {
   return { headwearId: headwear.id, fashionId: fashion.id };
 }
 
+async function migrateSalaryBusinessScoping() {
+  const queryInterface = sequelize.getQueryInterface();
+  const columns = await queryInterface.describeTable('salary_payments');
+  if (!columns.business_id) {
+    await queryInterface.addColumn('salary_payments', 'business_id', {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    });
+  }
+
+  // The previous key made one payment row global for a user/week. It must be
+  // removed before those rows can be copied into each business.
+  const oldIndexes = await queryInterface.showIndex('salary_payments');
+  const hasUserForeignKeyIndex = oldIndexes.some((index) => {
+    const fields = (index.fields || []).map((field) => field.attribute || field.name);
+    return !index.unique && fields.length === 1 && fields[0] === 'user_id';
+  });
+  if (!hasUserForeignKeyIndex) {
+    // MySQL will not drop the old unique index while the user foreign key relies
+    // on it. This narrow index keeps that constraint valid during the migration.
+    await queryInterface.addIndex('salary_payments', ['user_id'], {
+      name: 'salary_payments_user_id_fk',
+    });
+  }
+  for (const index of oldIndexes) {
+    const fields = (index.fields || []).map((field) => field.attribute || field.name);
+    if (index.unique && fields.length === 2 && fields.includes('user_id') && fields.includes('week_start')) {
+      await queryInterface.removeIndex('salary_payments', index.name);
+    }
+  }
+
+  const businesses = await Business.findAll({ order: [['id', 'ASC']] });
+  const defaultBusinessId = businesses[0]?.id || null;
+  const legacyPayments = await SalaryPayment.findAll({
+    where: { businessId: null },
+    include: [{ model: User }],
+  });
+  for (const legacy of legacyPayments) {
+    const targetBusinessIds = legacy.User?.role === 'owner'
+      ? businesses.map((business) => business.id)
+      : [legacy.User?.businessId || defaultBusinessId].filter(Boolean);
+    for (const businessId of targetBusinessIds) {
+      await SalaryPayment.findOrCreate({
+        where: { userId: legacy.userId, weekStart: legacy.weekStart, businessId },
+        defaults: {
+          userId: legacy.userId,
+          weekStart: legacy.weekStart,
+          businessId,
+          paid: legacy.paid,
+          paidAt: legacy.paidAt,
+          bonus: legacy.bonus,
+          thr: legacy.thr,
+          deduction: legacy.deduction,
+        },
+      });
+    }
+    await legacy.destroy();
+  }
+
+  if (defaultBusinessId) {
+    await SalaryPayment.update(
+      { businessId: defaultBusinessId },
+      { where: { businessId: null } },
+    );
+  }
+  await queryInterface.changeColumn('salary_payments', 'business_id', {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  });
+
+  const indexes = await queryInterface.showIndex('salary_payments');
+  const hasScopedIndex = indexes.some((index) => {
+    const fields = (index.fields || []).map((field) => field.attribute || field.name);
+    return index.unique
+      && fields.length === 3
+      && fields.includes('user_id')
+      && fields.includes('week_start')
+      && fields.includes('business_id');
+  });
+  if (!hasScopedIndex) {
+    await queryInterface.addIndex('salary_payments', ['user_id', 'week_start', 'business_id'], {
+      name: 'salary_payments_user_week_business_unique',
+      unique: true,
+    });
+  }
+
+  const owners = await User.findAll({ where: { role: 'owner' } });
+  for (const owner of owners) {
+    for (const business of businesses) {
+      await OwnerSalarySetting.findOrCreate({
+        where: { userId: owner.id, businessId: business.id },
+        defaults: {
+          userId: owner.id,
+          businessId: business.id,
+          dailyWage: owner.dailyWage || 0,
+          mealAllowance: owner.mealAllowance || 0,
+          overtimeRatePerHour: owner.overtimeRatePerHour || 0,
+        },
+      });
+    }
+  }
+}
+
 async function bootstrap() {
   await ensureDatabase();
   await sequelize.authenticate();
@@ -4209,6 +4399,7 @@ async function bootstrap() {
   await migrateOwnerRole();
   await createInitialAdmin();
   const { headwearId, fashionId } = await migrateBusinessScoping();
+  await migrateSalaryBusinessScoping();
   await getAttendanceSettings(headwearId);
   await getAttendanceSettings(fashionId);
   await seedExpenseCategories(headwearId);
