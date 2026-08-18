@@ -142,14 +142,14 @@
               Digitalisasi data Excel, absensi wajah, dan laporan operasional dalam satu aplikasi.
             </h1>
             <p class="mt-4 max-w-xl text-sm leading-6 text-slate-400">
-              Login admin untuk mengelola data toko, barang, penjualan, beban, dan laporan.
-              Karyawan memakai alur login, daftar wajah sekali, lalu absen dengan kamera.
+              Masuk menggunakan akun masing-masing untuk mengakses fitur sesuai peran.
+              Owner dan karyawan dapat mendaftarkan wajah lalu absen dengan kamera.
             </p>
           </div>
           <div class="grid max-w-xl gap-3 text-sm text-slate-300">
             <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-4">Acuan data mengikuti workbook Excel yang sudah ada di folder proyek.</div>
-            <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-4">Role tersedia: admin dan karyawan.</div>
-            <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-4">Daftar wajah cukup dilakukan satu kali per karyawan.</div>
+            <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-4">Role tersedia: owner, kepala toko, admin, dan karyawan.</div>
+            <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-4">Daftar wajah cukup dilakukan satu kali per pengguna.</div>
           </div>
         </div>
 
@@ -159,18 +159,18 @@
               <p class="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Masuk Sistem</p>
               <h2 class="mt-2 text-2xl font-semibold text-slate-50">SDS Apps</h2>
               <p class="mt-2 text-sm leading-6 text-slate-400">
-                Gunakan akun admin atau karyawan untuk mengakses sistem.
+                Gunakan username dan password akun Anda untuk mengakses sistem.
               </p>
             </div>
 
-            <form class="space-y-4" @submit.prevent="handleLogin">
+            <form class="space-y-4" autocomplete="off" @submit.prevent="handleLogin">
               <div>
                 <label class="mb-2 block text-sm text-slate-300">Username</label>
-                <input v-model="loginForm.username" type="text" autocomplete="username" class="w-full rounded-md border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-400" placeholder="Masukkan username" />
+                <input v-model="loginForm.username" type="text" autocomplete="off" class="w-full rounded-md border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-400" placeholder="Masukkan username" />
               </div>
               <div>
                 <label class="mb-2 block text-sm text-slate-300">Password</label>
-                <input v-model="loginForm.password" type="password" autocomplete="current-password" class="w-full rounded-md border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-400" placeholder="Masukkan password" />
+                <input v-model="loginForm.password" type="password" autocomplete="new-password" class="w-full rounded-md border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-400" placeholder="Masukkan password" />
               </div>
               <button type="submit" class="w-full rounded-md bg-cyan-500 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">
                 Masuk
@@ -2519,17 +2519,20 @@
       }
     }
 
+    // Do not restore the old permanent admin session on shared devices.
+    localStorage.removeItem('topi_token');
+
     const appInstance = createApp({
       data() {
         return {
           loading: true,
-          token: localStorage.getItem('topi_token') || '',
+          token: sessionStorage.getItem('topi_token') || '',
           user: null,
           businesses: [],
           currentBusinessId: localStorage.getItem('sds_business_id') || '',
           loginForm: {
-            username: 'admin',
-            password: 'admin123',
+            username: '',
+            password: '',
           },
           activeTab: 'dashboard',
           mobileMenuOpen: false,
@@ -2713,13 +2716,13 @@
           return ['karyawan', 'admin'].includes(this.user?.role);
         },
         canSelfAttendance() {
-          return ['leader', 'karyawan', 'admin'].includes(this.user?.role);
+          return ['owner', 'leader', 'karyawan', 'admin'].includes(this.user?.role);
         },
         isAttendanceSelfView() {
           return this.isSelfService || this.activeTab === 'absensi-mandiri';
         },
         selfAttendanceTab() {
-          return this.isLeader ? 'absensi-mandiri' : 'absensi';
+          return (this.isOwner || this.isLeader) ? 'absensi-mandiri' : 'absensi';
         },
         attendanceViewRows() {
           return this.isAttendanceSelfView ? this.selfAttendanceRows : this.attendanceRows;
@@ -2791,6 +2794,8 @@
               { key: 'dashboard', label: 'Dashboard' },
               { key: 'karyawan', label: 'Karyawan' },
               { key: 'absensi', label: 'Absensi' },
+              { key: 'wajah', label: 'Wajah Saya' },
+              { key: 'absensi-mandiri', label: 'Absensi Mandiri' },
               { key: 'toko', label: 'Data Toko' },
               { key: 'barang', label: 'Data Barang' },
               { key: 'penjualan', label: 'Penjualan' },
@@ -3017,6 +3022,7 @@
             await this.refreshAll();
           } catch (error) {
             this.token = '';
+            sessionStorage.removeItem('topi_token');
             localStorage.removeItem('topi_token');
             this.loading = false;
           }
@@ -3033,7 +3039,7 @@
               throw new Error(payload.message || 'Gagal masuk.');
             }
             this.token = payload.token;
-            localStorage.setItem('topi_token', payload.token);
+            sessionStorage.setItem('topi_token', payload.token);
             this.user = payload.data;
             this.businesses = payload.availableBusinesses || [];
             this.syncCurrentBusiness();
@@ -3086,6 +3092,8 @@
           this.faceCapturedPreview = '';
           this.faceCapturedDescriptor = null;
           this.faceStatus = 'Kamera belum aktif.';
+          this.loginForm = { username: '', password: '' };
+          sessionStorage.removeItem('topi_token');
           localStorage.removeItem('topi_token');
           if (!silent) {
             Swal.fire({
@@ -4955,8 +4963,8 @@
         },
         async saveFace() {
           try {
-            if (!['leader', 'karyawan', 'admin'].includes(this.user.role)) {
-              throw new Error('Daftar wajah hanya untuk kepala toko, karyawan, atau admin.');
+            if (!['owner', 'leader', 'karyawan', 'admin'].includes(this.user.role)) {
+              throw new Error('Daftar wajah tidak tersedia untuk role Anda.');
             }
             if (!this.faceCapturedBlob) {
               throw new Error('Ambil foto wajah terlebih dahulu.');
@@ -4995,8 +5003,8 @@
         },
         async startAbsenCapture() {
           try {
-            if (!['leader', 'karyawan', 'admin'].includes(this.user.role)) {
-              throw new Error('Absensi hanya untuk kepala toko, karyawan, atau admin.');
+            if (!['owner', 'leader', 'karyawan', 'admin'].includes(this.user.role)) {
+              throw new Error('Absensi tidak tersedia untuk role Anda.');
             }
             if (!this.faceProfile?.registered) {
               throw new Error('Wajah belum terdaftar. Silakan daftar wajah dulu.');
@@ -5024,8 +5032,8 @@
         },
         async absenSekarang() {
           try {
-            if (!['leader', 'karyawan', 'admin'].includes(this.user.role)) {
-              throw new Error('Absensi hanya untuk kepala toko, karyawan, atau admin.');
+            if (!['owner', 'leader', 'karyawan', 'admin'].includes(this.user.role)) {
+              throw new Error('Absensi tidak tersedia untuk role Anda.');
             }
             if (!this.faceProfile?.registered) {
               throw new Error('Wajah belum terdaftar. Silakan daftar wajah dulu.');

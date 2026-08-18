@@ -941,6 +941,31 @@ async function ownerSalarySettingsByUser(users, businessId) {
   return new Map(rows.map((row) => [row.userId, row]));
 }
 
+async function attendanceUserScopeWhere(req, extraWhere = {}) {
+  if (req.businessId === null || req.businessId === undefined) return extraWhere;
+  const settings = await OwnerSalarySetting.findAll({
+    where: { businessId: req.businessId },
+    attributes: ['userId'],
+  });
+  const ownerIds = settings.map((setting) => setting.userId);
+  return {
+    ...extraWhere,
+    [Op.or]: [
+      { businessId: req.businessId },
+      ...(ownerIds.length ? [{ id: { [Op.in]: ownerIds } }] : []),
+    ],
+  };
+}
+
+async function isUserInAttendanceBusiness(user, businessId) {
+  if (!user || businessId === null || businessId === undefined) return Boolean(user);
+  if (user.role !== 'owner') return user.businessId === businessId;
+  return Boolean(await OwnerSalarySetting.findOne({
+    where: { userId: user.id, businessId },
+    attributes: ['id'],
+  }));
+}
+
 async function upsertOwnerSalarySetting(user, businessId, values = {}) {
   const [row] = await OwnerSalarySetting.findOrCreate({
     where: { userId: user.id, businessId },
@@ -1167,8 +1192,8 @@ const ownerLeaderAdmin = (req, res, next) => {
 };
 
 const selfServiceRole = (req, res, next) => {
-  if (!['leader', 'karyawan', 'admin'].includes(req.user?.role)) {
-    return res.status(403).json({ ok: false, message: 'Fitur ini hanya untuk kepala toko, karyawan, atau admin.' });
+  if (!['owner', 'leader', 'karyawan', 'admin'].includes(req.user?.role)) {
+    return res.status(403).json({ ok: false, message: 'Fitur ini tidak tersedia untuk role Anda.' });
   }
   return next();
 };
@@ -2679,6 +2704,10 @@ async function resetDatabase(businessId) {
     'DELETE FROM `attendance` WHERE `user_id` IN (SELECT `id` FROM `users` WHERE `business_id` = :businessId)',
     { replacements: { businessId } },
   );
+  await sequelize.query(
+    'DELETE FROM `attendance` WHERE `user_id` IN (SELECT `user_id` FROM `owner_salary_settings` WHERE `business_id` = :businessId)',
+    { replacements: { businessId } },
+  );
   await SalaryPayment.destroy({ where: { businessId } });
   await OwnerSalarySetting.destroy({ where: { businessId } });
   const scopedTables = ['sales', 'marketing_expenses', 'operational_expenses', 'stores', 'products', 'shifts', 'attendance_settings', 'profit_share_partners'];
@@ -3330,8 +3359,8 @@ app.post('/api/users/bulk-delete', ...authRequired, ownerOnly, async (req, res) 
 });
 
 app.get('/api/face/me', ...authRequired, async (req, res) => {
-  if (!['leader', 'karyawan', 'admin'].includes(req.user.role)) {
-    return res.status(403).json({ ok: false, message: 'Daftar wajah hanya tersedia untuk kepala toko, karyawan, atau admin.' });
+  if (!['owner', 'leader', 'karyawan', 'admin'].includes(req.user.role)) {
+    return res.status(403).json({ ok: false, message: 'Daftar wajah tidak tersedia untuk role Anda.' });
   }
   return res.json({
     ok: true,
@@ -3348,8 +3377,8 @@ app.get('/api/face/me', ...authRequired, async (req, res) => {
 
 app.post('/api/face/register', ...authRequired, async (req, res) => {
   try {
-    if (!['leader', 'karyawan', 'admin'].includes(req.user.role)) {
-      return res.status(403).json({ ok: false, message: 'Daftar wajah hanya untuk kepala toko, karyawan, atau admin.' });
+    if (!['owner', 'leader', 'karyawan', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ ok: false, message: 'Daftar wajah tidak tersedia untuk role Anda.' });
     }
     const descriptor = req.body.descriptor;
     const faceImageUrl = toText(req.body.faceImageUrl);
@@ -3380,6 +3409,9 @@ app.post('/api/face/register', ...authRequired, async (req, res) => {
 
 app.get('/api/attendance/me', ...authRequired, async (req, res) => {
   try {
+    if (!(await isUserInAttendanceBusiness(req.user, req.businessId))) {
+      return res.json({ ok: true, data: [] });
+    }
     const rows = await Attendance.findAll({
       where: { userId: req.user.id },
       include: [{ model: User }],
@@ -3403,7 +3435,7 @@ app.get('/api/attendance', ...authRequired, ownerOrLeader, async (req, res) => {
     }
     const rows = await Attendance.findAll({
       where,
-      include: [{ model: User, where: businessWhere(req) }],
+      include: [{ model: User, where: await attendanceUserScopeWhere(req) }],
       order: [['workDate', 'DESC'], ['createdAt', 'DESC']],
       limit: 400,
       subQuery: false,
@@ -3514,7 +3546,7 @@ const ATTENDANCE_STATUSES = ['hadir', 'izin', 'sakit', 'cuti'];
 app.get('/api/employees/roster', ...authRequired, ownerOrLeader, async (req, res) => {
   try {
     const rows = await User.findAll({
-      where: businessWhere(req, { active: true }),
+      where: await attendanceUserScopeWhere(req, { active: true }),
       attributes: ['id', 'fullName'],
       order: [['fullName', 'ASC']],
     });
@@ -3536,7 +3568,7 @@ app.post('/api/attendance', ...authRequired, ownerOrLeader, async (req, res) => 
       return res.status(400).json({ ok: false, message: 'Status tidak valid.' });
     }
     const target = await User.findByPk(userId);
-    if (!target || !assertOwnedByBusiness(target, req)) {
+    if (!target || !(await isUserInAttendanceBusiness(target, req.businessId))) {
       return res.status(404).json({ ok: false, message: 'Karyawan tidak ditemukan.' });
     }
     let row = await Attendance.findOne({ where: { userId, workDate } });
@@ -3563,7 +3595,7 @@ app.post('/api/attendance', ...authRequired, ownerOrLeader, async (req, res) => 
 app.put('/api/attendance/:id', ...authRequired, ownerOrLeader, async (req, res) => {
   try {
     const row = await Attendance.findByPk(req.params.id, { include: [{ model: User }] });
-    if (!row || !assertOwnedByBusiness(row.User, req)) {
+    if (!row || !(await isUserInAttendanceBusiness(row.User, req.businessId))) {
       return res.status(404).json({ ok: false, message: 'Data absensi tidak ditemukan.' });
     }
     if (req.body.status !== undefined) {
@@ -3589,7 +3621,7 @@ app.put('/api/attendance/:id', ...authRequired, ownerOrLeader, async (req, res) 
 app.delete('/api/attendance/:id', ...authRequired, ownerOrLeader, async (req, res) => {
   try {
     const row = await Attendance.findByPk(req.params.id, { include: [{ model: User }] });
-    if (!row || !assertOwnedByBusiness(row.User, req)) {
+    if (!row || !(await isUserInAttendanceBusiness(row.User, req.businessId))) {
       return res.status(404).json({ ok: false, message: 'Data tidak ditemukan.' });
     }
     await row.destroy();
@@ -3607,7 +3639,7 @@ app.post('/api/attendance/bulk-delete', ...authRequired, ownerOrLeader, async (r
     }
     const scopedRows = await Attendance.findAll({
       where: { id: { [Op.in]: ids } },
-      include: [{ model: User, where: businessWhere(req) }],
+      include: [{ model: User, where: await attendanceUserScopeWhere(req) }],
       attributes: ['id'],
     });
     const scopedIds = scopedRows.map((row) => row.id);
@@ -3620,8 +3652,11 @@ app.post('/api/attendance/bulk-delete', ...authRequired, ownerOrLeader, async (r
 
 app.post('/api/attendance/check-in', ...authRequired, async (req, res) => {
   try {
-    if (!['leader', 'karyawan', 'admin'].includes(req.user.role)) {
-      return res.status(403).json({ ok: false, message: 'Absensi wajah hanya untuk kepala toko, karyawan, atau admin.' });
+    if (!['owner', 'leader', 'karyawan', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ ok: false, message: 'Absensi wajah tidak tersedia untuk role Anda.' });
+    }
+    if (!(await isUserInAttendanceBusiness(req.user, req.businessId))) {
+      return res.status(403).json({ ok: false, message: 'Akun Anda tidak ditugaskan ke absensi bisnis aktif.' });
     }
     const photoUrl = toText(req.body.photoUrl);
     if (!photoUrl) {
