@@ -131,6 +131,27 @@ async function isOvertimeDay(workDate) {
   const holiday = await Holiday.findOne({ where: { date: workDate } });
   return Boolean(holiday);
 }
+function shiftDurationHours(user, settings) {
+  const source = user && user.Shift ? user.Shift : settings;
+  const start = String((source && source.checkInStart) || '07:00').split(':').map(Number);
+  const end = String((source && source.checkOutStart) || '17:00').split(':').map(Number);
+  const startMinutes = (start[0] || 0) * 60 + (start[1] || 0);
+  let endMinutes = (end[0] || 0) * 60 + (end[1] || 0);
+  if (endMinutes <= startMinutes) {
+    endMinutes += 24 * 60;
+  }
+  return Math.round(((endMinutes - startMinutes) / 60) * 100) / 100;
+}
+async function resolveManualOvertimeHours(user, workDate, status, businessId) {
+  if (status !== 'hadir') {
+    return 0;
+  }
+  if (!(await isOvertimeDay(workDate))) {
+    return 0;
+  }
+  const settings = await getAttendanceSettings(businessId);
+  return shiftDurationHours(user, settings);
+}
 const money = (value) => toInt(value, 0);
 const now = () => new Date();
 
@@ -3567,14 +3588,18 @@ app.post('/api/attendance', ...authRequired, ownerOrLeader, async (req, res) => 
     if (!ATTENDANCE_STATUSES.includes(status)) {
       return res.status(400).json({ ok: false, message: 'Status tidak valid.' });
     }
-    const target = await User.findByPk(userId);
+    const target = await User.findByPk(userId, { include: [{ model: Shift }] });
     if (!target || !(await isUserInAttendanceBusiness(target, req.businessId))) {
       return res.status(404).json({ ok: false, message: 'Karyawan tidak ditemukan.' });
     }
+    const overtimeHours = req.body.overtimeHours !== undefined && toText(req.body.overtimeHours) !== ''
+      ? Math.max(0, toFloat(req.body.overtimeHours, 0))
+      : await resolveManualOvertimeHours(target, workDate, status, req.businessId);
     let row = await Attendance.findOne({ where: { userId, workDate } });
     if (row) {
       row.status = status;
       row.note = toText(req.body.note) || row.note;
+      row.overtimeHours = overtimeHours;
       await row.save();
     } else {
       row = await Attendance.create({
@@ -3583,6 +3608,7 @@ app.post('/api/attendance', ...authRequired, ownerOrLeader, async (req, res) => 
         status,
         method: 'manual',
         note: toText(req.body.note),
+        overtimeHours,
       });
     }
     const output = await Attendance.findByPk(row.id, { include: [{ model: User }] });
@@ -3605,8 +3631,13 @@ app.put('/api/attendance/:id', ...authRequired, ownerOrLeader, async (req, res) 
       }
       row.status = status;
     }
-    if (req.body.overtimeHours !== undefined) {
+    if (row.status !== 'hadir') {
+      row.overtimeHours = 0;
+    } else if (req.body.overtimeHours !== undefined && toText(req.body.overtimeHours) !== '') {
       row.overtimeHours = Math.max(0, toFloat(req.body.overtimeHours, 0));
+    } else if (req.body.status !== undefined) {
+      const target = await User.findByPk(row.userId, { include: [{ model: Shift }] });
+      row.overtimeHours = await resolveManualOvertimeHours(target, row.workDate, row.status, req.businessId);
     }
     if (req.body.note !== undefined) {
       row.note = toText(req.body.note);
