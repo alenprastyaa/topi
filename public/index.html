@@ -1420,7 +1420,7 @@
                     <tbody>
                       <tr v-for="row in salaryReportOwner" :key="'salary-owner-'+row.user.id" class="border-b border-slate-800 last:border-0">
                         <td class="px-4 py-3 text-slate-100">{{ row.user.fullName }}</td>
-                        <td class="px-4 py-3 text-right text-slate-300">{{ row.presentDays }}</td>
+                        <td class="px-4 py-3 text-right text-slate-300">{{ row.presentDays }}<span v-if="row.paidDays !== undefined && row.paidDays !== row.presentDays" class="ml-1 text-xs text-slate-500" title="Hari libur dibayar sebagai lembur, tanpa gaji pokok.">({{ row.paidDays }} gaji pokok)</span></td>
                         <td class="px-4 py-3 text-right text-slate-300">{{ formatMoney(row.dailyWage) }}</td>
                         <td class="px-4 py-3 text-right text-slate-300">{{ formatMoney(row.allowanceTotal) }}</td>
                         <td class="px-4 py-3 text-right text-slate-300">{{ row.overtimeHours.toFixed(1) }}</td>
@@ -1480,7 +1480,7 @@
                   <tbody>
                     <tr v-for="row in salaryReportOthers" :key="'salary-'+row.user.id" class="border-b border-slate-800 last:border-0">
                       <td class="px-4 py-3 text-slate-100">{{ row.user.fullName }}</td>
-                      <td class="px-4 py-3 text-right text-slate-300">{{ row.presentDays }}</td>
+                      <td class="px-4 py-3 text-right text-slate-300">{{ row.presentDays }}<span v-if="row.paidDays !== undefined && row.paidDays !== row.presentDays" class="ml-1 text-xs text-slate-500" title="Hari libur dibayar sebagai lembur, tanpa gaji pokok.">({{ row.paidDays }} gaji pokok)</span></td>
                       <td class="px-4 py-3 text-right text-slate-300">{{ formatMoney(row.dailyWage) }}</td>
                       <td class="px-4 py-3 text-right text-slate-300">{{ formatMoney(row.allowanceTotal) }}</td>
                       <td class="px-4 py-3 text-right text-slate-300">{{ row.overtimeHours.toFixed(1) }}</td>
@@ -3899,15 +3899,19 @@
             if (!response.ok || !payload || payload.ok === false) {
               throw new Error(payload?.message || 'Gagal import data barang.');
             }
-            this.productImportSummary = payload.data;
+            const summary = payload.data || {};
+            this.productImportSummary = summary;
             this.productFilters.page = 1;
-            await this.refreshAll();
+            const failedCount = summary.failedRowsCount || 0;
             Swal.fire({
-              icon: 'success',
+              icon: failedCount ? 'warning' : 'success',
               title: 'Import barang selesai',
-              text: `${payload.data.productsCreated} barang baru dan ${payload.data.productsUpdated} barang diperbarui.`,
+              text: `${summary.productsCreated || 0} barang baru dan ${summary.productsUpdated || 0} barang diperbarui.${failedCount ? ` ${failedCount} baris gagal, unduh Data Gagal untuk detail.` : ''}`,
               confirmButtonColor: '#06b6d4',
             });
+            // Refresh dilakukan setelah notifikasi supaya kegagalan memuat ulang
+            // tidak dilaporkan sebagai gagal import.
+            await this.refreshAll();
           } catch (error) {
             Swal.fire({
               icon: 'error',

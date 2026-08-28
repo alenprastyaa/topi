@@ -131,6 +131,24 @@ async function isOvertimeDay(workDate) {
   const holiday = await Holiday.findOne({ where: { date: workDate } });
   return Boolean(holiday);
 }
+// Batch version of isOvertimeDay so payroll can classify a whole period with a
+// single query instead of one lookup per attendance row.
+async function overtimeDateSet(dates) {
+  const unique = [...new Set((dates || []).map((value) => toText(value)).filter(Boolean))];
+  if (!unique.length) {
+    return new Set();
+  }
+  const holidays = await Holiday.findAll({ where: { date: { [Op.in]: unique } } });
+  const holidayDates = new Set(holidays.map((row) => toText(row.date)));
+  const result = new Set();
+  for (const date of unique) {
+    const [y, m, d] = date.split('-').map(Number);
+    if (new Date(y, m - 1, d).getDay() === 0 || holidayDates.has(date)) {
+      result.add(date);
+    }
+  }
+  return result;
+}
 function shiftDurationHours(user, settings) {
   const source = user && user.Shift ? user.Shift : settings;
   const start = String((source && source.checkInStart) || '07:00').split(':').map(Number);
@@ -144,6 +162,10 @@ function shiftDurationHours(user, settings) {
 }
 async function resolveManualOvertimeHours(user, workDate, status, businessId) {
   if (status !== 'hadir') {
+    return 0;
+  }
+  // Owner tidak pernah mendapat lembur, hanya gaji pokok.
+  if (user && user.role === 'owner') {
     return 0;
   }
   if (!(await isOvertimeDay(workDate))) {
@@ -1282,23 +1304,43 @@ function requireConcreteBusiness(req, res) {
 
 const authRequired = [auth, loadCurrentUser, resolveBusiness];
 
-function buildSalaryRow(user, presentDays, attendanceRecords, paymentRow, salarySetting = null) {
+// Hari lembur (minggu/hari libur) dibayar sebagai lembur saja: gaji pokok dan
+// uang makan hanya dihitung pada hari kerja biasa. Owner tidak punya lembur,
+// sehingga seluruh kehadirannya dibayar sebagai gaji pokok.
+function splitPaidDays(user, attendanceRecords, presentDays, overtimeDates) {
+  const isOwner = user && user.role === 'owner';
+  const records = attendanceRecords || [];
+  if (isOwner) {
+    return { paidDays: presentDays, overtimeHours: 0 };
+  }
+  const overtimeHours = records.reduce((sum, record) => sum + (record.overtimeHours || 0), 0);
+  if (!overtimeDates || !overtimeDates.size) {
+    return { paidDays: presentDays, overtimeHours };
+  }
+  const overtimeDayCount = records
+    .filter((record) => record.status === 'hadir' && overtimeDates.has(toText(record.workDate)))
+    .length;
+  return { paidDays: Math.max(0, presentDays - overtimeDayCount), overtimeHours };
+}
+
+function buildSalaryRow(user, presentDays, attendanceRecords, paymentRow, salarySetting = null, overtimeDates = null) {
   const salarySource = salarySetting || user;
   const dailyWage = salarySource.dailyWage || 0;
   const mealAllowance = salarySource.mealAllowance || 0;
-  const overtimeRatePerHour = salarySource.overtimeRatePerHour || 0;
-  const overtimeHours = (attendanceRecords || []).reduce((sum, record) => sum + (record.overtimeHours || 0), 0);
+  const overtimeRatePerHour = user && user.role === 'owner' ? 0 : (salarySource.overtimeRatePerHour || 0);
+  const { paidDays, overtimeHours } = splitPaidDays(user, attendanceRecords, presentDays, overtimeDates);
   const overtimePay = Math.round(overtimeHours * overtimeRatePerHour);
   const bonus = paymentRow?.bonus || 0;
   const thr = paymentRow?.thr || 0;
   const deduction = paymentRow?.deduction || 0;
-  const salaryBase = presentDays * dailyWage;
-  const mealTotal = presentDays * mealAllowance;
+  const salaryBase = paidDays * dailyWage;
+  const mealTotal = paidDays * mealAllowance;
   const gross = salaryBase + mealTotal + overtimePay + bonus + thr;
   const net = gross - deduction;
   return {
     user: serializeUser(user, salarySetting),
     presentDays,
+    paidDays,
     dailyWage,
     mealAllowance,
     overtimeHours,
@@ -1550,6 +1592,11 @@ async function buildProfitSummary(from, to, saleFilters = {}, businessId = null)
     bucket(operationalMap, label, readAmount(row, 'nominal'));
   }
 
+  // Gaji dari Laporan Gaji ikut masuk sebagai beban operasional toko supaya
+  // laba rugi tidak perlu input manual lagi.
+  const gajiKaryawan = await computeGajiTotalForPeriod(from, to, businessId);
+  bucket(operationalMap, 'Beban Gaji, Upah & Honorer', gajiKaryawan);
+
   for (const row of marketingRows) {
     const label = resolveMarketingLabel(row.category, row.platformStore);
     bucket(marketingMap, label, readAmount(row, 'nominal') + readAmount(row, 'totalTax', 'total_tax'));
@@ -1603,6 +1650,7 @@ async function buildProfitSummary(from, to, saleFilters = {}, businessId = null)
       marketingNominal,
       marketingTax,
       adminFee,
+      gajiKaryawan,
       operatingExpense,
       operatingProfit,
       nonOperationalIncome,
@@ -1651,15 +1699,18 @@ async function computeGajiTotalForPeriod(from, to, businessId = null) {
     paymentsByUser.get(payment.userId).push(payment);
   }
 
+  const overtimeDates = await overtimeDateSet(attendanceRows.map((row) => row.workDate));
+
   let total = 0;
   for (const user of users) {
     const salarySource = ownerSettings.get(user.id) || user;
     const records = attendanceByUser.get(user.id) || [];
     const presentDays = records.filter((record) => record.status === 'hadir').length;
-    const overtimeHours = records.reduce((sum, record) => sum + (record.overtimeHours || 0), 0);
-    const overtimePay = Math.round(overtimeHours * (salarySource.overtimeRatePerHour || 0));
-    const salaryBase = presentDays * (salarySource.dailyWage || 0);
-    const mealTotal = presentDays * (salarySource.mealAllowance || 0);
+    const { paidDays, overtimeHours } = splitPaidDays(user, records, presentDays, overtimeDates);
+    const overtimeRate = user.role === 'owner' ? 0 : (salarySource.overtimeRatePerHour || 0);
+    const overtimePay = Math.round(overtimeHours * overtimeRate);
+    const salaryBase = paidDays * (salarySource.dailyWage || 0);
+    const mealTotal = paidDays * (salarySource.mealAllowance || 0);
     const userPayments = paymentsByUser.get(user.id) || [];
     const bonus = userPayments.reduce((sum, payment) => sum + (payment.bonus || 0), 0);
     const thr = userPayments.reduce((sum, payment) => sum + (payment.thr || 0), 0);
@@ -1676,8 +1727,9 @@ async function buildDashboard(from, to, { platform = '', storeName = '', sku = '
     ...(storeName ? { storeName } : {}),
     ...(sku ? { sku } : {}),
   }, businessId);
-  const gajiKaryawan = await computeGajiTotalForPeriod(from, to, businessId);
-  const totalBebanPeriode = profitSummary.totals.operational + profitSummary.totals.marketing + profitSummary.totals.adminFee + gajiKaryawan;
+  // Gaji sudah termasuk di dalam total beban operasional laba rugi.
+  const gajiKaryawan = profitSummary.totals.gajiKaryawan;
+  const totalBebanPeriode = profitSummary.totals.operational + profitSummary.totals.marketing + profitSummary.totals.adminFee;
 
   const [totalOrders, revenueTrend, platformContribution, topProducts] = await Promise.all([
     countDistinctOrders(saleFilters),
@@ -2555,28 +2607,34 @@ async function importProductsWorkbook(buffer, businessId) {
       continue;
     }
 
-    const [product, isCreated] = await Product.findOrCreate({
-      where: { sku, businessId },
-      defaults: {
-        businessId,
-        sku,
+    // Satu baris bermasalah tidak boleh membatalkan seluruh import: baris yang
+    // sudah tersimpan tetap dihitung dan baris gagal dilaporkan ke pengguna.
+    try {
+      const [product, isCreated] = await Product.findOrCreate({
+        where: { sku, businessId },
+        defaults: {
+          businessId,
+          sku,
+          name,
+          variant: variant || '-',
+          hpp,
+        },
+      });
+      if (isCreated) {
+        created += 1;
+        summary.productsCreated += 1;
+        continue;
+      }
+      await product.update({
         name,
-        variant: variant || '-',
+        variant: variant || product.variant || '-',
         hpp,
-      },
-    });
-    if (isCreated) {
-      created += 1;
-      summary.productsCreated += 1;
-      continue;
+      });
+      updated += 1;
+      summary.productsUpdated += 1;
+    } catch (error) {
+      failedRows.push({ rowNumber, reason: error.message || 'Baris gagal disimpan', raw: row || [] });
     }
-    await product.update({
-      name,
-      variant: variant || product.variant || '-',
-      hpp,
-    });
-    updated += 1;
-    summary.productsUpdated += 1;
   }
 
   summary.sheets.push({
@@ -3592,9 +3650,11 @@ app.post('/api/attendance', ...authRequired, ownerOrLeader, async (req, res) => 
     if (!target || !(await isUserInAttendanceBusiness(target, req.businessId))) {
       return res.status(404).json({ ok: false, message: 'Karyawan tidak ditemukan.' });
     }
-    const overtimeHours = req.body.overtimeHours !== undefined && toText(req.body.overtimeHours) !== ''
-      ? Math.max(0, toFloat(req.body.overtimeHours, 0))
-      : await resolveManualOvertimeHours(target, workDate, status, req.businessId);
+    const overtimeHours = target.role === 'owner'
+      ? 0
+      : (req.body.overtimeHours !== undefined && toText(req.body.overtimeHours) !== ''
+        ? Math.max(0, toFloat(req.body.overtimeHours, 0))
+        : await resolveManualOvertimeHours(target, workDate, status, req.businessId));
     let row = await Attendance.findOne({ where: { userId, workDate } });
     if (row) {
       row.status = status;
@@ -3631,7 +3691,7 @@ app.put('/api/attendance/:id', ...authRequired, ownerOrLeader, async (req, res) 
       }
       row.status = status;
     }
-    if (row.status !== 'hadir') {
+    if (row.status !== 'hadir' || (row.User && row.User.role === 'owner')) {
       row.overtimeHours = 0;
     } else if (req.body.overtimeHours !== undefined && toText(req.body.overtimeHours) !== '') {
       row.overtimeHours = Math.max(0, toFloat(req.body.overtimeHours, 0));
@@ -3769,7 +3829,7 @@ app.post('/api/attendance/check-in', ...authRequired, async (req, res) => {
       row.checkOutDistanceMeters = distanceMeters;
       row.checkOutPhotoUrl = photoUrl;
       row.checkOutLocationName = locationName || null;
-      if (row.checkInAt && await isOvertimeDay(row.workDate)) {
+      if (row.checkInAt && req.user.role !== 'owner' && await isOvertimeDay(row.workDate)) {
         row.overtimeHours = Math.max(0, (row.checkOutAt.getTime() - row.checkInAt.getTime()) / 3600000);
       }
       await row.save();
@@ -3814,10 +3874,11 @@ async function computeSalaryReport(weekStart, scopeWhere, businessId) {
     where: { weekStart, businessId, userId: { [Op.in]: users.map((user) => user.id) } },
   });
   const paymentsByUser = new Map(payments.map((payment) => [payment.userId, payment]));
+  const overtimeDates = await overtimeDateSet(attendanceRows.map((row) => row.workDate));
   const data = users.map((user) => {
     const records = grouped.get(user.id) || [];
     const presentDays = records.filter((record) => record.status === 'hadir').length;
-    return buildSalaryRow(user, presentDays, records, paymentsByUser.get(user.id), ownerSettings.get(user.id));
+    return buildSalaryRow(user, presentDays, records, paymentsByUser.get(user.id), ownerSettings.get(user.id), overtimeDates);
   });
   return { data, start, end };
 }
